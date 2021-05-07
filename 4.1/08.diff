@@ -1,0 +1,24 @@
+commit 288cec9c4f1002fc7f2b5c7804cbda52a7d5242d
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Fri Jan 15 21:01:58 2016 +0300
+
+    Require proper CPU locality for sockets
+
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 2c295416..5c44cb0d 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -851,6 +851,13 @@ static inline int sk_backlog_rcv(struct sock *sk, struct sk_buff *skb)
+ 
+ static inline void sk_incoming_cpu_update(struct sock *sk)
+ {
++#ifdef CONFIG_SECURITY_TEMPESTA
++	if (unlikely(sk->sk_incoming_cpu != raw_smp_processor_id()))
++		net_warn_ratelimited("Warning: bad socket cpu locality:"
++				     " old_cpu=%d curr_cpu=%d\n",
++				     sk->sk_incoming_cpu,
++				     raw_smp_processor_id());
++#endif
+ 	sk->sk_incoming_cpu = raw_smp_processor_id();
+ }
+ 

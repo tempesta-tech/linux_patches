@@ -1,0 +1,41 @@
+commit 9cea1ec0156145217ac6320c40189b40b8160780
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Fri Jun 16 12:58:14 2017 +0300
+
+    Fix FPU memory corruption: in_softirq() returns true just after local_bh_disable()
+
+diff --git a/arch/x86/kernel/fpu/core.c b/arch/x86/kernel/fpu/core.c
+index 10e7abfa..3ddbc89e 100644
+--- a/arch/x86/kernel/fpu/core.c
++++ b/arch/x86/kernel/fpu/core.c
+@@ -149,7 +149,7 @@ EXPORT_SYMBOL(__kernel_fpu_end_bh);
+ void __kernel_fpu_begin(void)
+ {
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-	if (in_softirq())
++	if (in_serving_softirq())
+ 		return;
+ #endif
+ 	__kernel_fpu_begin_bh();
+@@ -159,7 +159,7 @@ EXPORT_SYMBOL(__kernel_fpu_begin);
+ void __kernel_fpu_end(void)
+ {
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-	if (in_softirq())
++	if (in_serving_softirq())
+ 		return;
+ #endif
+ 	__kernel_fpu_end_bh();
+diff --git a/net/ipv4/inet_hashtables.c b/net/ipv4/inet_hashtables.c
+index 01926e61..f9aa0032 100644
+--- a/net/ipv4/inet_hashtables.c
++++ b/net/ipv4/inet_hashtables.c
+@@ -619,7 +619,7 @@ other_parity_scan:
+ 		goto ok;
+ next_port:
+ 		spin_unlock_bh(&head->lock);
+-		if (!in_softirq())
++		if (!in_serving_softirq())
+ 			cond_resched();
+ 	}
+ 

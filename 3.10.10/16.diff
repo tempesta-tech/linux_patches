@@ -1,0 +1,445 @@
+commit 1a2be76e8839ba9da029cd5cb8e45033c118c056
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Thu Sep 10 00:54:23 2015 +0300
+
+    Tempesta DB: allocate huge pages using more robust approach and fallback to vmalloc() if it fails
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index c8d2d8e1..bc663a88 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -2967,10 +2967,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
+ 
+ 	tdfx=		[HW,DRM]
+ 
+-	tempesta_pages=	[KNL]
+-			Order of pages reserved on each NUMA node for
+-			Tempesta database. Must be multiple greater or equal
+-			to 9 (one Tempesta DB extent size, 4KB * 2 ^ 9 = 2MB).
++	tempesta_dbmem=	[KNL]
++			Order of 2MB memory blocks reserved on each NUMA node
++			for Tempesta database. Huge pages are used if
++			possible.
+ 
+ 	test_suspend=	[SUSPEND]
+ 			Specify "mem" (for Suspend-to-RAM) or "standby" (for
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index a7daef04..fe120da2 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -268,12 +268,6 @@ config ZONE_DMA
+ 
+ 	  If unsure, say Y.
+ 
+-config FORCE_MAX_ZONEORDER
+-	int "MAX_ORDER (11 - 15)"  if SECURITY_TEMPESTA
+-	range 11 15  if SECURITY_TEMPESTA
+-	default "15" if SECURITY_TEMPESTA
+-	default "11"
+-
+ config SMP
+ 	bool "Symmetric multi-processing support"
+ 	---help---
+diff --git a/include/linux/tempesta.h b/include/linux/tempesta.h
+index 35dd9dc6..1db97b30 100644
+--- a/include/linux/tempesta.h
++++ b/include/linux/tempesta.h
+@@ -2,7 +2,7 @@
+  * Linux interface for Tempesta FW (FireWall and/or FrameWork).
+  *
+  * Copyright (C) 2012-2014 NatSys Lab. (info@natsys-lab.com).
+- * Copyright (C) 2015 Tempesta Technologies.
++ * Copyright (C) 2015 Tempesta Technologies, Inc.
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published by
+@@ -29,7 +29,7 @@ typedef struct {
+ 
+ typedef struct {
+ 	unsigned long	addr;
+-	unsigned long	pages;
++	unsigned long	pages; /* number of 4KB pages */
+ } TempestaMapping;
+ 
+ /* Security hooks. */
+@@ -38,6 +38,7 @@ void tempesta_unregister_ops(TempestaOps *tops);
+ 
+ /* Memory management. */
+ void tempesta_reserve_pages(void);
++void tempesta_reserve_vmpages(void);
+ int tempesta_get_mapping(int node, TempestaMapping **tm);
+ 
+ #endif /* __TEMPESTA_H__ */
+diff --git a/init/main.c b/init/main.c
+index c6d79bbe..8969bbcf 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -463,10 +463,24 @@ static void __init mm_init(void)
+ 	 */
+ 	page_cgroup_init_flatmem();
+ 	mem_init();
++
++	/*
++	 * Tempesta: reserve pages just when zones are initialized
++	 * to get continous address space of huge pages.
++	 */
++#ifdef CONFIG_SECURITY_TEMPESTA
++	tempesta_reserve_pages();
++#endif
++
+ 	kmem_cache_init();
+ 	percpu_init_late();
+ 	pgtable_cache_init();
+ 	vmalloc_init();
++
++	/* Try vmalloc() if the previous one failed. */
++#ifdef CONFIG_SECURITY_TEMPESTA
++	tempesta_reserve_vmpages();
++#endif
+ }
+ 
+ asmlinkage void __init start_kernel(void)
+@@ -638,14 +652,6 @@ asmlinkage void __init start_kernel(void)
+ 
+ 	ftrace_init();
+ 
+-	/*
+-	 * Tempesta: reserve pages at so early stage to get continous
+-	 * address space of physical pages.
+-	 */
+-#ifdef CONFIG_SECURITY_TEMPESTA
+-	tempesta_reserve_pages();
+-#endif
+-
+ 	/* Do the rest non-__init'ed, we're now alive */
+ 	rest_init();
+ }
+diff --git a/mm/tempesta_mm.c b/mm/tempesta_mm.c
+index 396b4659..3909f7ff 100644
+--- a/mm/tempesta_mm.c
++++ b/mm/tempesta_mm.c
+@@ -1,7 +1,7 @@
+ /**
+  *		Tempesta Memory Reservation
+  *
+- * Copyright (C) 2015 Tempesta Technologies.
++ * Copyright (C) 2015 Tempesta Technologies, Inc.
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published by
+@@ -18,88 +18,265 @@
+  * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+  */
+ #include <linux/gfp.h>
++#include <linux/hugetlb.h>
+ #include <linux/tempesta.h>
+ #include <linux/topology.h>
++#include <linux/vmalloc.h>
+ 
+-#define MAX_PGORDER		25	/* 128GB per one table */
+-#define MIN_PGORDER		9	/* 2MB - one extent */
+-#define DEFAULT_PGORDER		17	/* 512MB */
+-#define PGCHUNKS		(1 << (MAX_PGORDER - MAX_ORDER + 1))
++#include "internal.h"
++
++#define MAX_PGORDER		16	/* 128GB per one table */
++#define MIN_PGORDER		0	/* 2MB - one extent */
++#define DEFAULT_PGORDER		8	/* 512MB */
++/* Modern processors support up to 1.5TB of RAM, be ready for 2TB. */
++#define GREEDY_ARNUM		(1024 * 1024 + 1)
++#define PGNUM			(1 << pgorder)
++#define PGNUM4K			(PGNUM * (1 << HUGETLB_PAGE_ORDER))
+ 
+ static int pgorder = DEFAULT_PGORDER;
++static gfp_t gfp_f = GFP_HIGHUSER | __GFP_COMP | __GFP_THISNODE | __GFP_ZERO
++		     | __GFP_REPEAT |__GFP_NOWARN;
+ static TempestaMapping map[MAX_NUMNODES];
++/*
++ * Modern x86-64 has not more than 512GB RAM per physical node.
++ * This is very large amount of memory, but it will be freed when
++ * initialization phase ends.
++ */
++static struct page *greedy[GREEDY_ARNUM] __initdata = { 0 };
+ 
+ static int __init
+ tempesta_setup_pages(char *str)
+ {
+ 	get_option(&str, &pgorder);
+-	if (pgorder < MIN_PGORDER)
++	if (pgorder < MIN_PGORDER) {
++		pr_err("Tempesta: bad dbmem value %d, must be [%d:%d]\n",
++		       pgorder, MIN_PGORDER, MAX_PGORDER);
+ 		pgorder = MIN_PGORDER;
++	}
++	if (pgorder > MAX_PGORDER) {
++		pr_err("Tempesta: bad dbmem value %d, must be [%d:%d]\n",
++		       pgorder, MIN_PGORDER, MAX_PGORDER);
++		pgorder = MAX_PGORDER;
++	}
+ 
+ 	return 1;
+ }
+-__setup("tempesta_pages=", tempesta_setup_pages);
++__setup("tempesta_dbmem=", tempesta_setup_pages);
+ 
+-void __init
+-tempesta_reserve_pages(void)
++/**
++ * The code is somewhat stollen from mm/hugetlb.c.
++ */
++static struct page *
++tempesta_alloc_hpage(int nid)
++{
++	struct page *p;
++
++	p = alloc_pages_exact_node(nid, gfp_f, HUGETLB_PAGE_ORDER);
++	if (!p)
++		return NULL;
++
++	if (arch_prepare_hugepage(p)) {
++		pr_err("Tempesta: cannot prepare hugepage %p at node %d\n",
++		       p, nid);
++		return NULL;
++	}
++
++	count_vm_event(HTLB_BUDDY_PGALLOC);
++
++	__ClearPageReserved(p);
++	prep_compound_page(p, HUGETLB_PAGE_ORDER);
++
++	/* Acquire the page immediately. */
++	set_page_refcounted(p);
++
++	return p;
++}
++
++static void
++tempesta_free_hpage(struct page *p)
++{
++	__free_pages(p, HUGETLB_PAGE_ORDER);
++}
++
++/**
++ * Greedely alloc huge pages and try to find continous region organized
++ * by sorted set of allocated pages. When the region is found, all pages
++ * out of it are returned to system.
++ */
++static struct page *
++tempesta_alloc_contmem(int nid)
+ {
+-	static struct page *pg_arr[PGCHUNKS];
+-	struct page *p = NULL;
+-	int i, node, n, chunk_order;
+-
+-	chunk_order = min_t(int, MAX_ORDER - 1, pgorder);
+-	n = 1 << (pgorder - chunk_order);
+-
+-	/*
+-	 * Linux buddy allocator returns blocks aligned on the their size
+-	 * and returned addresses grow from top to bottom.
+-	 */
+-	for_each_node_with_cpus(node) {
+-		for (i = n - 1; i >= 0; --i) {
+-			p = alloc_pages_node(node, GFP_KERNEL|__GFP_ZERO,
+-					     chunk_order);
+-			if (!p) {
+-				pr_err("Tempesta: cannot allocate page set"
+-				       " at node %d\n", node);
+-				goto err;
++	long min = -1, start = -1, curr = 0, end = -1, max = -1;
++	struct page *p;
++
++	while (1) {
++		p = tempesta_alloc_hpage(nid);
++		if (!p)
++			goto err;
++		curr = ((long)page_address(p) - PAGE_OFFSET) >> HPAGE_SHIFT;
++		/*
++		 * The first kernel mapped page is always reserved.
++		 * Keep untouched (zero) bounds for faster lookups.
++		 */
++		BUG_ON(curr < 1 || curr >= GREEDY_ARNUM);
++		greedy[curr] = p;
++
++		/* First time initialization. */
++		if (min < 0) {
++			min = start = end = max = curr;
++		} else {
++			/* Update bounds for faster pages return. */
++			if (min > curr)
++				min = curr;
++			if (max < curr)
++				max = curr;
++			/* Update continous memory segment bounds. */
++			if (curr == end + 1) {
++				while (end <= max && greedy[end + 1])
++					++end;
+ 			}
+-			if (i < n - 1
+-			    && page_address(p) + PAGE_SIZE * (1 << chunk_order)
+-			       != page_address(pg_arr[i + 1]))
+-			{
+-				pr_err("Tempesta: sparse page set alloc:"
+-				       " %p:%p %lx\n", page_address(p),
+-				     page_address(pg_arr[i + 1]),
+-				     PAGE_SIZE * (1 << chunk_order));
+-				goto err;
++			else if (curr + 1 == start) {
++				while (start >= min && greedy[start - 1])
++					--start;
+ 			}
++			else {
++				/* Try to find new continous segment. */
++				long i, d_max = 0, good_start = start = min;
++				for (i = min; i <= max; ++i) {
++					if (greedy[i]) {
++						if (start == -1)
++							start = i;
++						end = i;
++						if (i - start + 1 == PGNUM)
++							break;
++						continue;
++					}
+ 
+-			pr_info("Tempesta: alloc %lu pages starting at address"
+-				" %p at node %d\n",
+-			     1UL << chunk_order, page_address(p), node);
++					if (start > 0 && end - start > d_max) {
++						good_start = start;
++						d_max = end - start;
++					}
++					start = -1;
++				}
++				if (end - start < d_max) {
++					start = good_start;
++					end = start + d_max;
++				}
++			}
++		}
+ 
+-			pg_arr[i] = p;
++		if (end - start + 1 == PGNUM)
++			break; /* continous space is built! */
++	}
++
++	/* Return unnecessary pages. */
++	BUG_ON(min < 0 || start < 0 || end < 0 || max < 0);
++	for ( ; min < start; ++min)
++		if (greedy[min]) {
++			tempesta_free_hpage(greedy[min]);
++			greedy[min] = NULL;
++		}
++	for ( ; max > end; --max)
++		if (greedy[max]) {
++			tempesta_free_hpage(greedy[max]);
++			greedy[max] = NULL;
+ 		}
+-		BUG_ON(map[node].addr);
+-		map[node].addr = (unsigned long)page_address(p);
+-		map[node].pages = 1 << pgorder;
++	return greedy[start];
++
++err:
++	pr_err("Tempesta: cannot allocate %u continous huge pages at node"
++	       " %d\n", PGNUM, nid);
++	for ( ; min >= 0 && min <= max; ++min)
++		if (greedy[min]) {
++			tempesta_free_hpage(greedy[min]);
++			greedy[min] = NULL;
++		}
++	return NULL;
++}
++
++/**
++ * Allocate continous virtual space of huge pages for Tempesta.
++ * We do not use giantic 1GB pages since not all modern x86-64 CPUs
++ * allows them in virtualized mode.
++ *
++ * TODO try firstly to allocate giantic pages, next huge pages and finally
++ * fallback to common 4KB pages allocation if previous tries failed.
++ */
++void __init
++tempesta_reserve_pages(void)
++{
++	int nid;
++	struct page *p;
++
++	for_each_online_node(nid) {
++		p = tempesta_alloc_contmem(nid);
++		if (!p)
++			goto err;
++
++		map[nid].addr = (unsigned long)page_address(p);
++		map[nid].pages = PGNUM4K;
++
++		pr_info("Tempesta: allocated huge pages space %p %luMB at node"
++			" %d\n", page_address(p),
++			PGNUM4K * PAGE_SIZE / (1024 * 1024), nid);
++	}
++
++	return;
++err:
++	for_each_online_node(nid) {
++		struct page *pend;
++		if (!map[nid].addr)
++			continue;
++		for (p = virt_to_page(map[nid].addr), pend = p + PGNUM4K;
++		     p < pend; p += 1 << HUGETLB_PAGE_ORDER)
++			tempesta_free_hpage(p);
++	}
++	memset(map, 0, sizeof(map));
++}
++
++/**
++ * Allocates necessary space if tempesta_reserve_pages() failed.
++ */
++void __init
++tempesta_reserve_vmpages(void)
++{
++	int nid, maps = 0;
++	size_t vmsize = PGNUM * (1 << HPAGE_SHIFT);
++
++	for_each_online_node(nid)
++		maps += !!map[nid].addr;
++
++	BUG_ON(maps && maps < nr_online_nodes);
++	if (maps == nr_online_nodes)
++		return;
++
++	for_each_online_node(nid) {
++		pr_warn("Tempesta: allocate %u vmalloc pages at node %d\n",
++			PGNUM4K, nid);
++
++		map[nid].addr = (unsigned long)vzalloc_node(vmsize, nid);
++		if (!map[nid].addr)
++			goto err;
++		map[nid].pages = PGNUM4K;
+ 	}
+ 
+ 	return;
+ err:
+-	for (--node; node >= 0; --node)
+-		for (i = 0; i < n; ++i)
+-			if (pg_arr[i])
+-				__free_pages(pg_arr[i], chunk_order);
++	pr_err("Tempesta: cannot vmalloc area of %lu bytes at node %d\n",
++	       vmsize, nid);
++	for_each_online_node(nid)
++		if (map[nid].addr)
++			vfree((void *)map[nid].addr);
++	memset(map, 0, sizeof(map));
+ }
+ 
+ int
+-tempesta_get_mapping(int node, TempestaMapping **tm)
++tempesta_get_mapping(int nid, TempestaMapping **tm)
+ {
+-	if (!map[node].addr)
++	if (unlikely(!map[nid].addr))
+ 		return -ENOMEM;
+ 
+-	*tm = &map[node];
++	*tm = &map[nid];
+ 
+ 	return 0;
+ }

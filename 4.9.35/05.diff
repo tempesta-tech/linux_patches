@@ -1,0 +1,28 @@
+commit df465ad278e2e0513e456ced8896253271bf56c0
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sat Oct 14 02:50:53 2017 +0300
+
+    Fix small typos in comments
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 5cbfdae3..f232d88a 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -275,7 +275,7 @@ do {									\
+ 
+ 	/*
+ 	 * Add compound page metadata, if page order is > 0.
+-	 * Don't use __GFP_NOMEMALLOC to allow caller access reserved pools if
++	 * Don't use __GFP_NOMEMALLOC to allow caller access to reserved pools if
+ 	 * it requested so.
+ 	 */
+ 	gfp_mask |= __GFP_NOWARN | __GFP_NORETRY | (po ? __GFP_COMP : 0);
+@@ -285,7 +285,7 @@ do {									\
+ 	ptr = (char *)page_address(pg);
+ 	/*
+ 	 * Don't try to split compound page. Also don't try to reuse pages
+-	 * from reserved memory areas making them putted and freed quicker.
++	 * from reserved memory areas to put and free them quicker.
+ 	 *
+ 	 * TODO compound pages can be split as __alloc_page_frag() does it
+ 	 * using fragment size in page reference counter. Large messages

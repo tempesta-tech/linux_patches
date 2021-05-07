@@ -1,0 +1,38 @@
+commit a3fe96b68bb0e8c5a666d6c065d75dc82d796fdb
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sun Feb 12 23:23:21 2017 +0300
+
+    Fix #145: do not use socket accept queue for Tempesta sockets
+
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 2f423230..196f9f91 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -741,6 +741,9 @@ enum sock_flags {
+ 	SOCK_FILTER_LOCKED, /* Filter cannot be changed anymore */
+ 	SOCK_SELECT_ERR_QUEUE, /* Wake select on error queue */
+ 	SOCK_RCU_FREE, /* wait rcu grace period in sk_destruct() */
++#ifdef CONFIG_SECURITY_TEMPESTA
++	SOCK_TEMPESTA, /* The socket is managed by Tempesta FW */
++#endif
+ };
+ 
+ #define SK_FLAGS_TIMESTAMP ((1UL << SOCK_TIMESTAMP) | (1UL << SOCK_TIMESTAMPING_RX_SOFTWARE))
+diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
+index 61a9deec..6c21d9ee 100644
+--- a/net/ipv4/inet_connection_sock.c
++++ b/net/ipv4/inet_connection_sock.c
+@@ -799,7 +799,12 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
+ 	if (unlikely(sk->sk_state != TCP_LISTEN)) {
+ 		inet_child_forget(sk, req, child);
+ 		child = NULL;
+-	} else {
++	}
++	else if (sock_flag(sk, SOCK_TEMPESTA)) {
++		/* Tempesta doesn't use accept queue, just put the request. */
++		reqsk_put(req);
++	}
++	else {
+ 		req->sk = child;
+ 		req->dl_next = NULL;
+ 		if (queue->rskq_accept_head == NULL)

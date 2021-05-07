@@ -1,0 +1,24 @@
+commit d091d94345c11a1d859e7d5002c70a0178b94cce
+Author: Aleksey Baulin <ab@natsys-lab.com>
+Date:   Mon Mar 14 11:21:41 2016 +0300
+
+    Cover a missed case for the SKB page allocator.
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index d9a3ba8f..a40e64b3 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4210,7 +4210,12 @@ static gro_result_t napi_skb_finish(gro_result_t ret, struct sk_buff *skb)
+ 
+ 	case GRO_MERGED_FREE:
+ 		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD)
+-			kmem_cache_free(skbuff_head_cache, skb);
++#ifdef CONFIG_SECURITY_TEMPESTA
++			if (skb->skb_page)
++				put_page(virt_to_head_page(skb));
++			else
++#endif
++				kmem_cache_free(skbuff_head_cache, skb);
+ 		else
+ 			__kfree_skb(skb);
+ 		break;

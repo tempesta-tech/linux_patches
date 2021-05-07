@@ -1,0 +1,106 @@
+commit 153ab2a4f66bd7d36fc396a72a4d8a867b78764b
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue Nov 1 20:59:09 2016 +0300
+
+    Make kernel compilable w/o CONFIG_SECURITY_TEMPESTA
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 964a86e2..20e7cf4b 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -1564,7 +1564,11 @@ static inline struct sk_buff *__skb_dequeue_tail(struct sk_buff_head *list)
+ 
+ static inline bool skb_is_nonlinear(const struct sk_buff *skb)
+ {
++#ifdef CONFIG_SECURITY_TEMPESTA
+ 	return skb->tail_lock || skb->data_len;
++#else
++	return skb->data_len;
++#endif
+ }
+ 
+ static inline unsigned int skb_headlen(const struct sk_buff *skb)
+@@ -1750,6 +1754,7 @@ static inline unsigned int skb_headroom(const struct sk_buff *skb)
+ 	return skb->data - skb->head;
+ }
+ 
++#ifdef CONFIG_SECURITY_TEMPESTA
+ /**
+  *	skb_tailroom_locked - bytes at buffer end
+  *	@skb: buffer to check
+@@ -1761,6 +1766,7 @@ static inline int skb_tailroom_locked(const struct sk_buff *skb)
+ {
+ 	return skb->tail_lock ? 0 : skb->end - skb->tail;
+ }
++#endif
+ 
+ /**
+  *	skb_tailroom - bytes at buffer end
+@@ -3476,6 +3482,7 @@ static inline unsigned int skb_gso_network_seglen(const struct sk_buff *skb)
+ 	return hdr_len + skb_gso_transport_seglen(skb);
+ }
+ 
++#ifdef CONFIG_SECURITY_TEMPESTA
+ /*
+  * ------------------------------------------------------------------------
+  * 		Tempesta FW
+@@ -3497,6 +3504,6 @@ do {									\
+ 	TFW_SKB_CB(skb)->prev = NULL;					\
+ 	TFW_SKB_CB(skb)->next = NULL;					\
+ } while (0)
+-
++#endif  /* CONFIG_SECURITY_TEMPESTA */
+ #endif	/* __KERNEL__ */
+ #endif	/* _LINUX_SKBUFF_H */
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 16e47306..bada6616 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -382,7 +382,6 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
+ 			    int flags, int node)
+ {
+ 	struct kmem_cache *cache;
+-	struct skb_shared_info *shinfo;
+ 	struct sk_buff *skb;
+ 	u8 *data;
+ 	bool pfmemalloc;
+@@ -1000,8 +999,12 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
+ 	new->tstamp		= old->tstamp;
+ 	/* We do not copy old->sk */
+ 	new->dev		= old->dev;
++#ifdef CONFIG_SECURITY_TEMPESTA
+ 	memcpy(new->cb, old->cb, sizeof(old->cb) - sizeof(SsSkbCb));
+ 	TFW_SKB_CB_INIT(new);
++#else
++	memcpy(new->cb, old->cb, sizeof(old->cb));
++#endif
+ 	skb_dst_copy(new, old);
+ #ifdef CONFIG_XFRM
+ 	new->sp			= secpath_get(old->sp);
+@@ -1561,7 +1564,11 @@ int skb_pad(struct sk_buff *skb, int pad)
+ 		return 0;
+ 	}
+ 
++#ifdef CONFIG_SECURITY_TEMPESTA
+ 	ntail = skb->data_len + pad - skb_tailroom_locked(skb);
++#else
++	ntail = skb->data_len + pad - (skb->end - skb->tail);
++#endif
+ 	if (likely(skb_cloned(skb) || ntail > 0)) {
+ 		err = pskb_expand_head(skb, 0, ntail, GFP_ATOMIC);
+ 		if (unlikely(err))
+@@ -1796,7 +1803,13 @@ unsigned char *__pskb_pull_tail(struct sk_buff *skb, int delta)
+ 	 * plus 128 bytes for future expansions. If we have enough
+ 	 * room at tail, reallocate without expansion only if skb is cloned.
+ 	 */
+-	int i, k, eat = delta - skb_tailroom_locked(skb);
++	int i, k, eat;
++
++#ifdef CONFIG_SECURITY_TEMPESTA
++	eat = delta - skb_tailroom_locked(skb);
++#else
++	eat = (skb->tail + delta) - skb->end;
++#endif
+ 
+ 	if (eat > 0 || skb_cloned(skb)) {
+ 		if (pskb_expand_head(skb, 0, eat > 0 ? eat + 128 : 0,

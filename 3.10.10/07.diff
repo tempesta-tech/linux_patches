@@ -1,0 +1,61 @@
+commit 5ab0e0870c562ce9380d8d33293c19bfa9aa1fbe
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Wed Feb 25 14:29:49 2015 +0300
+
+    Fix Tempesta configuration
+
+diff --git a/security/Kconfig b/security/Kconfig
+index f32eadd9..2c69fbec 100644
+--- a/security/Kconfig
++++ b/security/Kconfig
+@@ -122,22 +122,26 @@ source security/smack/Kconfig
+ source security/tomoyo/Kconfig
+ source security/apparmor/Kconfig
+ source security/yama/Kconfig
++source security/tempesta/Kconfig
+ 
+ source security/integrity/Kconfig
+ 
+ choice
+ 	prompt "Default security module"
++	default DEFAULT_SECURITY_TEMPESTA if SECURITY_TEMPESTA
+ 	default DEFAULT_SECURITY_SELINUX if SECURITY_SELINUX
+ 	default DEFAULT_SECURITY_SMACK if SECURITY_SMACK
+ 	default DEFAULT_SECURITY_TOMOYO if SECURITY_TOMOYO
+ 	default DEFAULT_SECURITY_APPARMOR if SECURITY_APPARMOR
+ 	default DEFAULT_SECURITY_YAMA if SECURITY_YAMA
+-	default DEFAULT_SECURITY_TEMPESTA
+ 
+ 	help
+ 	  Select the security module that will be used by default if the
+ 	  kernel parameter security= is not specified.
+ 
++	config DEFAULT_SECURITY_TEMPESTA
++		bool "Tempesta FW" if SECURITY_TEMPESTA=y
++
+ 	config DEFAULT_SECURITY_SELINUX
+ 		bool "SELinux" if SECURITY_SELINUX=y
+ 
+@@ -160,6 +164,7 @@ endchoice
+ 
+ config DEFAULT_SECURITY
+ 	string
++	default "tempesta" if DEFAULT_SECURITY_TEMPESTA
+ 	default "selinux" if DEFAULT_SECURITY_SELINUX
+ 	default "smack" if DEFAULT_SECURITY_SMACK
+ 	default "tomoyo" if DEFAULT_SECURITY_TOMOYO
+diff --git a/security/tempesta/Kconfig b/security/tempesta/Kconfig
+new file mode 100644
+index 00000000..6f4b76de
+--- /dev/null
++++ b/security/tempesta/Kconfig
+@@ -0,0 +1,9 @@
++config SECURITY_TEMPESTA
++	bool "Tempesta FW Support"
++	depends on SECURITY && NET && INET
++	select SECURITY_NETWORK
++	default y
++	help
++	  This selects Tempesta FW security module.
++	  Further information my be found at https://github.com/natsys/tempesta
++	  If you are unsure how to answer this question, answer N.

@@ -1,0 +1,100 @@
+commit 56fa84d184f6d0d1e45c295c5c6a95b5223b59c2
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Fri Jan 15 21:24:08 2016 +0300
+
+    Update coding style for naming and typedefs
+
+diff --git a/Documentation/CodingStyle b/Documentation/CodingStyle
+index f6376f45..b10de96f 100644
+--- a/Documentation/CodingStyle
++++ b/Documentation/CodingStyle
+@@ -289,76 +289,27 @@ See chapter 6 (Functions).
+ 
+ 		Chapter 5: Typedefs
+ 
+-Please don't use things like "vps_t".
+-It's a _mistake_ to use typedef for structures and pointers. When you see a
++Linux kernel frowns on CamelCase and so we in general, but type names.
++Tempesta uses CamelCase usually prefixed with "Tfw" for type names and uses
++typedefs for them. So instead of
+ 
+ 	vps_t a;
+-
+-in the source, what does it mean?
+-In contrast, if it says
+-
+ 	struct virtual_container *a;
+ 
+-you can actually tell what "a" is.
+-
+-Lots of people think that typedefs "help readability". Not so. They are
+-useful only for:
+-
+- (a) totally opaque objects (where the typedef is actively used to _hide_
+-     what the object is).
+-
+-     Example: "pte_t" etc. opaque objects that you can only access using
+-     the proper accessor functions.
+-
+-     NOTE! Opaqueness and "accessor functions" are not good in themselves.
+-     The reason we have them for things like pte_t etc. is that there
+-     really is absolutely _zero_ portably accessible information there.
+-
+- (b) Clear integer types, where the abstraction _helps_ avoid confusion
+-     whether it is "int" or "long".
+-
+-     u8/u16/u32 are perfectly fine typedefs, although they fit into
+-     category (d) better than here.
+-
+-     NOTE! Again - there needs to be a _reason_ for this. If something is
+-     "unsigned long", then there's no reason to do
+-
+-	typedef unsigned long myflags_t;
+-
+-     but if there is a clear reason for why it under certain circumstances
+-     might be an "unsigned int" and under other configurations might be
+-     "unsigned long", then by all means go ahead and use a typedef.
+-
+- (c) when you use sparse to literally create a _new_ type for
+-     type-checking.
+-
+- (d) New types which are identical to standard C99 types, in certain
+-     exceptional circumstances.
+-
+-     Although it would only take a short amount of time for the eyes and
+-     brain to become accustomed to the standard types like 'uint32_t',
+-     some people object to their use anyway.
+-
+-     Therefore, the Linux-specific 'u8/u16/u32/u64' types and their
+-     signed equivalents which are identical to standard types are
+-     permitted -- although they are not mandatory in new code of your
+-     own.
+-
+-     When editing existing code which already uses one or the other set
+-     of types, you should conform to the existing choices in that code.
++we write
+ 
+- (e) Types safe for use in userspace.
++	TfwVps a;
++	TfwVirtualContainer *a;
+ 
+-     In certain structures which are visible to userspace, we cannot
+-     require C99 types and cannot use the 'u32' form above. Thus, we
+-     use __u32 and similar types in all structures which are shared
+-     with userspace.
++CamelCase helps to identify type name from other names while "_t" suffix just
++makes the name longer. We also use C++ for user-space code and this is quite
++unusual practice in C++ to write something like
+ 
+-Maybe there are other cases too, but the rule should basically be to NEVER
+-EVER use a typedef unless you can clearly match one of those rules.
++	struct A a(0);
++	class B b(a);
+ 
+-In general, a pointer, or a struct that has elements that can reasonably
+-be directly accessed should _never_ be a typedef.
++And we're trying to be good for C as well as for C++. Typedefs make C code
++look closer to C++ and that's also good for us.
+ 
+ 
+ 		Chapter 6: Functions

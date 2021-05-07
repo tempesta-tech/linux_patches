@@ -1,0 +1,39 @@
+commit a554d1f5d2021825ec32aac14a45e48172dc3bb8
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Fri Sep 5 16:21:38 2014 +0400
+
+    Export mmap symbols
+
+diff --git a/mm/init-mm.c b/mm/init-mm.c
+index a56a8519..e1567c39 100644
+--- a/mm/init-mm.c
++++ b/mm/init-mm.c
+@@ -23,3 +23,4 @@ struct mm_struct init_mm = {
+ 	.mmlist		= LIST_HEAD_INIT(init_mm.mmlist),
+ 	INIT_MM_CONTEXT(init_mm)
+ };
++EXPORT_SYMBOL(init_mm);
+diff --git a/mm/mlock.c b/mm/mlock.c
+index 79b7cf7d..8ec4b192 100644
+--- a/mm/mlock.c
++++ b/mm/mlock.c
+@@ -443,6 +443,7 @@ int __mm_populate(unsigned long start, unsigned long len, int ignore_errors)
+ 		up_read(&mm->mmap_sem);
+ 	return ret;	/* 0 or negative error code */
+ }
++EXPORT_SYMBOL(__mm_populate);
+ 
+ SYSCALL_DEFINE2(mlock, unsigned long, start, size_t, len)
+ {
+diff --git a/mm/mmap.c b/mm/mmap.c
+index 8d25fdc6..54fb1946 100644
+--- a/mm/mmap.c
++++ b/mm/mmap.c
+@@ -1348,6 +1348,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
+ 		*populate = len;
+ 	return addr;
+ }
++EXPORT_SYMBOL(do_mmap_pgoff);
+ 
+ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
+ 		unsigned long, prot, unsigned long, flags,

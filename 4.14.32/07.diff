@@ -1,0 +1,105 @@
+commit 4494baedc65e2991baaa7384c47e1943e03b5b0a
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Fri Nov 30 02:09:47 2018 +0300
+
+    * Fix TLS skb type handling to call sk_write_xmit() callback.
+    * Reserve room for TLS header in skb headroom.
+    * Reset TCP connection if we can not encrypt data on it instead of retransmit
+      it in plaintext. This leads to warning similar to #984 - leave as TODO for now.
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index 46bf7cc7..b698c645 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -148,11 +148,22 @@ static inline bool dev_xmit_complete(int rc)
+ # define LL_MAX_HEADER 32
+ #endif
+ 
++#ifdef CONFIG_SECURITY_TEMPESTA
++/*
++ * For Tempesta case the most traffic is TLS encrypted, so we need the extra
++ * room for TLS record header and explicit IV on skb allocation to avoid data
++ * movement on tcp_write_xmit(). Not all skbs have TLS headers - not a big deal
++ * to allocate 16 more bytes (5 - TLS header, 8 - IV, 3 - alignment).
++ */
++#define TLS_MAX_HDR	16
++#else
++#define TLS_MAX_HDR	0
++#endif
+ #if !IS_ENABLED(CONFIG_NET_IPIP) && !IS_ENABLED(CONFIG_NET_IPGRE) && \
+     !IS_ENABLED(CONFIG_IPV6_SIT) && !IS_ENABLED(CONFIG_IPV6_TUNNEL)
+-#define MAX_HEADER LL_MAX_HEADER
++#define MAX_HEADER (LL_MAX_HEADER + TLS_MAX_HDR)
+ #else
+-#define MAX_HEADER (LL_MAX_HEADER + 48)
++#define MAX_HEADER (LL_MAX_HEADER + 48 + TLS_MAX_HDR)
+ #endif
+ 
+ /*
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 30ca3af1..15e9d293 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -862,23 +862,20 @@ struct sk_buff {
+ 
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ /**
+- * The skb mark are used only for time between @skb was inserted into TCP send
++ * The skb type is used only for time between @skb was inserted into TCP send
+  * queue and it's processed (first time) in tcp_write_xmit(). This time the @skb
+  * isn't scheduled yet, so we can use skb->dev for our needs to avoid extending
+- * sk_buff. We use the least significant bit to be sure that the this isn't a
++ * sk_buff. We use the least significant bit to be sure that this isn't a
+  * pointer to not to break anything. TLS message type << 1 is alwasy smaller
+  * than 0xff.
+  */
+-static inline int
++static inline void
+ tempesta_tls_skb_settype(struct sk_buff *skb, unsigned char type)
+ {
+ 	BUG_ON(type >= 0x80);
+-	if (unlikely(skb->dev)) {
+-		WARN_ON_ONCE(skb->dev);
+-		return -EINVAL;
+-	}
++	WARN_ON_ONCE(skb->dev);
++
+ 	skb->dev = (void *)((type << 1) | 1UL);
+-	return 0;
+ }
+ 
+ static inline unsigned char
+@@ -886,8 +883,8 @@ tempesta_tls_skb_type(struct sk_buff *skb)
+ {
+ 	unsigned long d = (unsigned long)skb->dev;
+ 
+-	if (unlikely(d ^ 1UL))
+-		return 0;
++	if (!(d & 1UL))
++		return 0; /* a pointer in skb->dev */
+ 	return d >> 1;
+ }
+ 
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 01bd67d8..60da7ef4 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2369,8 +2369,17 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
+ 		 * get 16KB (maximum size of TLS message).
+ 		 */
+ 		if (sk->sk_write_xmit && tempesta_tls_skb_type(skb))
+-			if (unlikely(sk->sk_write_xmit(sk, skb, limit)))
++			if (unlikely(sk->sk_write_xmit(sk, skb, limit))) {
++				net_warn_ratelimited(
++					"Tempesta: cannot encrypt data,"
++					" so reset a TLS connection.\n");
++				/*
++				 * FIXME #984 WARNING: at net/core/stream.c:205
++				 * sk_stream_kill_queues+0x106/0x120
++				 */
++				tcp_reset(sk);
+ 				break;
++			}
+ #endif
+ 		if (unlikely(tcp_transmit_skb(sk, skb, 1, gfp)))
+ 			break;

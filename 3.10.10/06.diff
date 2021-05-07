@@ -1,0 +1,18 @@
+commit c50491d552728a62677362b26b0024d008465641
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Wed Feb 18 00:39:30 2015 +0300
+
+    Add NETLINK_TEMPESTA protocol
+
+diff --git a/include/uapi/linux/netlink.h b/include/uapi/linux/netlink.h
+index 1a85940f..909e081f 100644
+--- a/include/uapi/linux/netlink.h
++++ b/include/uapi/linux/netlink.h
+@@ -27,6 +27,7 @@
+ #define NETLINK_ECRYPTFS	19
+ #define NETLINK_RDMA		20
+ #define NETLINK_CRYPTO		21	/* Crypto layer */
++#define NETLINK_TEMPESTA	22
+ 
+ #define NETLINK_INET_DIAG	NETLINK_SOCK_DIAG
+ 

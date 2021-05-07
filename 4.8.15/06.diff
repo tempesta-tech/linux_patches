@@ -1,0 +1,415 @@
+commit 4e4fe80988b40f8b35e624eea538b1e9f2af5835
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sun Apr 16 21:53:29 2017 +0300
+
+    Remove CodingStyle from the kernel patch. The coding style description is moved to Tempesta repository
+
+diff --git a/Documentation/CodingStyle b/Documentation/CodingStyle
+index 998fc6d0..a0968367 100644
+--- a/Documentation/CodingStyle
++++ b/Documentation/CodingStyle
+@@ -1,5 +1,5 @@
+-		Tempesta coding style
+-	(based on Linux kernel coding style)
++
++		Linux kernel coding style
+ 
+ This is a short document describing the preferred coding style for the
+ linux kernel.  Coding style is very personal, and I won't _force_ my
+@@ -86,17 +86,6 @@ are placed substantially to the right. The same applies to function headers
+ with a long argument list. However, never break user-visible strings such as
+ printk messages, because that breaks the ability to grep for them.
+ 
+-Functions calls on multiple lines must have the arguments aligned properly on
+-the second and subsequent lines (see https://lkml.org/lkml/2013/6/6/703),
+-this means:
+-
+-	function(arg1, arg2,
+-		 arg3, arg4);
+-
+-You must use the appropriate number of TAB and space characters to achieve this
+-proper column alignment, rather than only using TAB characters as you have done
+-here.
+-
+ 
+ 		Chapter 3: Placing Braces and Spaces
+ 
+@@ -127,8 +116,7 @@ while, do).  E.g.:
+ However, there is one special case, namely functions: they have the
+ opening brace at the beginning of the next line, thus:
+ 
+-	int
+-	function(int x)
++	int function(int x)
+ 	{
+ 		body of function
+ 	}
+@@ -151,11 +139,9 @@ and
+ 
+ 	if (x == y) {
+ 		..
+-	}
+-	else if (x > y) {
++	} else if (x > y) {
+ 		...
+-	}
+-	else {
++	} else {
+ 		....
+ 	}
+ 
+@@ -167,9 +153,6 @@ supply of new-lines on your screen is not a renewable resource (think
+ 25-line terminal screens here), you have more empty lines to put
+ comments on.
+ 
+-However, please note that else-if statements begins at new line to make
+-conditions more explicit and improve code readability.
+-
+ Do not unnecessarily use braces where a single statement will do.
+ 
+ 	if (condition)
+@@ -289,27 +272,76 @@ See chapter 6 (Functions).
+ 
+ 		Chapter 5: Typedefs
+ 
+-Linux kernel frowns on CamelCase and so we in general, but type names.
+-Tempesta uses CamelCase usually prefixed with "Tfw" for type names and uses
+-typedefs for them. So instead of
++Please don't use things like "vps_t".
++It's a _mistake_ to use typedef for structures and pointers. When you see a
+ 
+ 	vps_t a;
++
++in the source, what does it mean?
++In contrast, if it says
++
+ 	struct virtual_container *a;
+ 
+-we write
++you can actually tell what "a" is.
++
++Lots of people think that typedefs "help readability". Not so. They are
++useful only for:
++
++ (a) totally opaque objects (where the typedef is actively used to _hide_
++     what the object is).
++
++     Example: "pte_t" etc. opaque objects that you can only access using
++     the proper accessor functions.
++
++     NOTE! Opaqueness and "accessor functions" are not good in themselves.
++     The reason we have them for things like pte_t etc. is that there
++     really is absolutely _zero_ portably accessible information there.
++
++ (b) Clear integer types, where the abstraction _helps_ avoid confusion
++     whether it is "int" or "long".
++
++     u8/u16/u32 are perfectly fine typedefs, although they fit into
++     category (d) better than here.
++
++     NOTE! Again - there needs to be a _reason_ for this. If something is
++     "unsigned long", then there's no reason to do
++
++	typedef unsigned long myflags_t;
++
++     but if there is a clear reason for why it under certain circumstances
++     might be an "unsigned int" and under other configurations might be
++     "unsigned long", then by all means go ahead and use a typedef.
++
++ (c) when you use sparse to literally create a _new_ type for
++     type-checking.
++
++ (d) New types which are identical to standard C99 types, in certain
++     exceptional circumstances.
+ 
+-	TfwVps a;
+-	TfwVirtualContainer *a;
++     Although it would only take a short amount of time for the eyes and
++     brain to become accustomed to the standard types like 'uint32_t',
++     some people object to their use anyway.
+ 
+-CamelCase helps to identify type name from other names while "_t" suffix just
+-makes the name longer. We also use C++ for user-space code and this is quite
+-unusual practice in C++ to write something like
++     Therefore, the Linux-specific 'u8/u16/u32/u64' types and their
++     signed equivalents which are identical to standard types are
++     permitted -- although they are not mandatory in new code of your
++     own.
+ 
+-	struct A a(0);
+-	class B b(a);
++     When editing existing code which already uses one or the other set
++     of types, you should conform to the existing choices in that code.
+ 
+-And we're trying to be good for C as well as for C++. Typedefs make C code
+-look closer to C++ and that's also good for us.
++ (e) Types safe for use in userspace.
++
++     In certain structures which are visible to userspace, we cannot
++     require C99 types and cannot use the 'u32' form above. Thus, we
++     use __u32 and similar types in all structures which are shared
++     with userspace.
++
++Maybe there are other cases too, but the rule should basically be to NEVER
++EVER use a typedef unless you can clearly match one of those rules.
++
++In general, a pointer, or a struct that has elements that can reasonably
++be directly accessed should _never_ be a typedef.
+ 
+ 
+ 		Chapter 6: Functions
+@@ -343,8 +375,7 @@ In source files, separate functions with one blank line.  If the function is
+ exported, the EXPORT* macro for it should follow immediately after the closing
+ function brace line.  E.g.:
+ 
+-	int
+-	system_is_up(void)
++	int system_is_up(void)
+ 	{
+ 		return system_state == SYSTEM_RUNNING;
+ 	}
+@@ -354,31 +385,6 @@ In function prototypes, include parameter names with their data types.
+ Although this is not required by the C language, it is preferred in Linux
+ because it is a simple way to add valuable information for the reader.
+ 
+-Let's consider following *bad* example of C++ function definition:
+-
+-	template<typename T> inline SomeOtherTemplate<arg1, arg2> the_function(
+-		int a, char b, char c)
+-	{
+-		.....
+-	}
+-
+-In this example function type occupies almost full line, so there is no space
+-for name of the function and its arguments. To make function declarations more
+-convinient we place template argumenta at first line, function return type at
+-the second one and the function name with its arguments at the last line:
+-
+-	template<typename T>
+-	inline SomeOtherTemplate<arg1, arg2>
+-	the_function(int a, char b,
+-		     char c)
+-	{
+-		.....
+-	}
+-
+-Please note that if some function arguments ("c" at the example above) don't
+-fit one line, they are placed at the next line with identation by tabs and
+-spaces to the first argument.
+-
+ 
+ 		Chapter 7: Centralized exiting of functions
+ 
+@@ -402,8 +408,7 @@ The rationale for using gotos is:
+     modifications are prevented
+ - saves the compiler work to optimize redundant code away ;)
+ 
+-	int
+-	fun(int a)
++	int fun(int a)
+ 	{
+ 		int result = 0;
+ 		char *buffer;
+@@ -457,8 +462,7 @@ See the files Documentation/kernel-documentation.rst and scripts/kernel-doc
+ for details.
+ 
+ Linux style for comments is the C89 "/* ... */" style.
+-However, in application-level code you can use C99 or C++-style "// ..."
+-comments.
++Don't use C99-style "// ..." comments.
+ 
+ The preferred style for long (multi-line) comments is:
+ 
+@@ -471,6 +475,16 @@ The preferred style for long (multi-line) comments is:
+ 	 * with beginning and ending almost-blank lines.
+ 	 */
+ 
++For files in net/ and drivers/net/ the preferred style for long (multi-line)
++comments is a little different.
++
++	/* The preferred comment style for files in net/ and drivers/net
++	 * looks like this.
++	 *
++	 * It is nearly the same as the generally preferred comment style,
++	 * but there is no initial almost-blank line.
++	 */
++
+ It's also important to comment data, whether they are basic types or derived
+ types.  To this end, use just one data declaration per line (no commas for
+ multiple data declarations).  This leaves you room for a small comment on each
+@@ -554,15 +568,7 @@ config AUDIT
+ 	  logging of avc messages output).  Does not do system-call
+ 	  auditing without CONFIG_AUDITSYSCALL.
+ 
+-Features that might still be considered unstable should be defined as
+-dependent on "EXPERIMENTAL":
+-
+-config SLUB
+-	depends on EXPERIMENTAL && !ARCH_USES_SLAB_PAGE_STRUCT
+-	bool "SLUB (Unqueued Allocator)"
+-	...
+-
+-while seriously dangerous features (such as write support for certain
++Seriously dangerous features (such as write support for certain
+ filesystems) should advertise this prominently in their prompt string:
+ 
+ config ADFS_FS_RW
+@@ -710,8 +716,9 @@ used.
+ 		Chapter 14: Allocating memory
+ 
+ The kernel provides the following general purpose memory allocators:
+-kmalloc(), kzalloc(), kcalloc(), vmalloc(), and vzalloc().  Please refer to
+-the API documentation for further information about them.
++kmalloc(), kzalloc(), kmalloc_array(), kcalloc(), vmalloc(), and
++vzalloc().  Please refer to the API documentation for further information
++about them.
+ 
+ The preferred form for passing a size of a struct is the following:
+ 
+@@ -725,6 +732,17 @@ Casting the return value which is a void pointer is redundant. The conversion
+ from void pointer to any other pointer type is guaranteed by the C programming
+ language.
+ 
++The preferred form for allocating an array is the following:
++
++	p = kmalloc_array(n, sizeof(...), ...);
++
++The preferred form for allocating a zeroed array is the following:
++
++	p = kcalloc(n, sizeof(...), ...);
++
++Both forms check for overflow on the allocation size n * sizeof(...),
++and return NULL if that occurred.
++
+ 
+ 		Chapter 15: The inline disease
+ 
+@@ -805,109 +823,7 @@ need them.  Feel free to peruse that header file to see what else is already
+ defined that you shouldn't reproduce in your code.
+ 
+ 
+-		Chapter 18: C++ and other stuff
+-
+-We use the same coding style for kernel C and application C++ programming, so
+-we adjust the original guide with some C++ specific things.
+-
+-Althought Linux kernel doesn't like capital letters and typedefs for structures,
+-it is uncommon for C++ to write
+-
+-	struct virtual_container *a;
+-
+-or similarly
+-
+-	class virtual_container *a;
+-
+-so to keep consistency between structures and classes we should write
+-
+-	virtual_container_t *a;
+-
+-where virtual_container_t is a class typedef'ed structure. To be able to tell
+-what "a" is we name classes and structures the same way, using CamelCase.
+-So "a" becomes
+-
+-	VirtualContainer *a.
+-
+-C++ projects are often includes C, C++/STL, Boost and/or other header files.
+-It is desired to sort them as: firstly C-headers, then standard C++ headers,
+-headers from other standard libraries and lastly the project's internal headers:
+-
+-	#include <stdio.h>
+-	#include <stdlib.h>
+-
+-	#include <iostream>
+-	#include <vector>
+-
+-	#include <boost/bind.hpp>
+-
+-	#include "daemon.h"
+-	#include "mem.h"
+-
+-It is also good idea to sort includes alhpabetically.
+-
+-By the way, C++ is very powerfull tool which in many cases uses TIMTOWTDI (There
+-Is More Than One Way To Do It) concept. For example in some cases you can use
+-simple C-array, STL vector or Boost array. In such cases keep you code as simple
+-as possibly. It means that if there is no difference, then you should prefer
+-C-array to STL vector and STL vector to Boost array.
+-
+-If a code operates with many function pointers, then it is sometimes difficult
+-to find which function a pointer reffers to. So to simplify code navigation
+-function pointer types must be defined as <type_name>_t, functions which are
+-used with the types should be named as <some_prefix>_<type_name> and variables
+-of the type as <some_prefix>_<type_name> or <type_name>_<some_suffix>. E.g.:
+-
+-	typedef void (*some_func_t)(void);
+-
+-	void xxx_some_func(void) {};
+-	void yyy_some_func(void) {};
+-
+-	some_func_t var1_some_func = xxx_some_func;
+-	some_func_t some_func_var2 = yyy_some_func;
+-
+-This way it is pretty simple to grep whole code for all functions which can be
+-refered by "var1_some_func". Exception of the rule could be variable names
+-defined and used in one function scope.
+-
+-In Linux kernel pointer specifier "*" is placed near to the argument name.
+-There is no reason to treat C++ reference "&" differently. So prefer this style
+-
+-	int &func();
+-	int *a, &b = a;
+-
+-to this *bad* style:
+-
+-	int& func();
+-	int* a, & b = a;
+-
+-In C++ class methods (special type of function) can operate with global, local,
+-or the class memebers. So to differentiate class members from global and local
+-variables it is a good idea to use "_" suffix:
+-
+-	class A {
+-		int a_;
+-	};
+-
+-Exception safiness. All functions, which don't throw exceptions,  mandatory MUST
+-specify it with noexcept statement:
+-
+-	void func() noexcept;
+-
+-Yes, it makes risk to get unexpected exception. But such exceptions must be
+-tested and fixed during test phase. And, yes, each time when you need to modify
+-source code of a function you have to check that your changes don't affect
+-the function exception specification. However, it is much simplier to analyze
+-which work flow could lead to and to which exceptions.
+-
+-Do not use following stupid safe programming for conditions:
+-
+-	if (5 == a)
+-
+-It makes code hard to read, but prevents very rare type of misprint.
+-
+-
+-		Chapter 19:  Editor modelines and other cruft
++		Chapter 18:  Editor modelines and other cruft
+ 
+ Some editors can interpret configuration information embedded in source files,
+ indicated with special markers.  For example, emacs interprets lines marked
+@@ -934,7 +850,7 @@ own custom mode, or may have some other magic method for making indentation
+ work correctly.
+ 
+ 
+-		Chapter 20:  Inline assembly
++		Chapter 19:  Inline assembly
+ 
+ In architecture-specific code, you may need to use inline assembly to interface
+ with CPU or platform functionality.  Don't hesitate to do so when necessary.
+@@ -963,7 +879,7 @@ next instruction in the assembly output:
+ 	     : /* outputs */ : /* inputs */ : /* clobbers */);
+ 
+ 
+-		Chapter 21: Conditional Compilation
++		Chapter 20: Conditional Compilation
+ 
+ Wherever possible, don't use preprocessor conditionals (#if, #ifdef) in .c
+ files; doing so makes code harder to read and logic harder to follow.  Instead,

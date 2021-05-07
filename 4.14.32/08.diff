@@ -1,0 +1,22 @@
+commit 873ea4df516acd149f79cc75a462442bf30c374d
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue Dec 11 03:30:56 2018 +0300
+
+    Use atomic allocations for crypto context allocations
+
+diff --git a/crypto/api.c b/crypto/api.c
+index 941cd4c6..5fd308d8 100644
+--- a/crypto/api.c
++++ b/crypto/api.c
+@@ -451,7 +451,11 @@ void *crypto_create_tfm(struct crypto_alg *alg,
+ 	tfmsize = frontend->tfmsize;
+ 	total = tfmsize + sizeof(*tfm) + frontend->extsize(alg);
+ 
++#ifdef CONFIG_SECURITY_TEMPESTA
++	mem = kzalloc(total, GFP_ATOMIC);
++#else
+ 	mem = kzalloc(total, GFP_KERNEL);
++#endif
+ 	if (mem == NULL)
+ 		goto out_err;
+ 

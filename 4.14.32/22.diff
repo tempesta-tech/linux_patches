@@ -1,0 +1,23 @@
+commit a7e4c2928f80875b7b17f4e2222ced94f9145bef
+Author: Alexander K <ak@tempesta-tech.com>
+Date:   Tue Jan 19 21:54:22 2021 +0300
+
+    Add soft assertion that the socket is dead
+
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index c7c50f8c..c1e80bf3 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2396,9 +2396,11 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
+ 		 */
+ 		if (sk->sk_write_xmit && tempesta_tls_skb_type(skb)) {
+ 			result = sk->sk_write_xmit(sk, skb, limit);
+-			if (result == -EPIPE)
++			if (result == -EPIPE) {
+ 				/* Just a closed socket - do nothing. */
++				WARN_ON_ONCE(!sock_flag(sk, SOCK_DEAD));
+ 				return false;
++			}
+ 			if (result) {
+ 				/*
+ 				 * We can not send unencrypted data and can not

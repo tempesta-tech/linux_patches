@@ -1,0 +1,39 @@
+commit deb1c0991d5a8b31b41a4f5533aef71699d6df76
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sun Dec 13 16:52:10 2015 +0300
+
+    Use our own skb_entail() since we cannot use the original function after the patch http://permalink.gmane.org/gmane.linux.network/331609
+
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 0827ab31..ab4c696b 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -580,7 +580,6 @@ static inline int tcp_bound_to_half_wnd(struct tcp_sock *tp, int pktsize)
+ void tcp_get_info(struct sock *, struct tcp_info *);
+ 
+ /* Routines required by Tempesta FW. */
+-extern void skb_entail(struct sock *sk, struct sk_buff *skb);
+ void tcp_cleanup_rbuf(struct sock *sk, int copied);
+ extern void tcp_push(struct sock *sk, int flags, int mss_now, int nonagle,
+ 		     int size_goal);
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 3d2504b7..29f7ce19 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -614,7 +614,7 @@ static inline bool forced_push(const struct tcp_sock *tp)
+ 	return after(tp->write_seq, tp->pushed_seq + (tp->max_window >> 1));
+ }
+ 
+-void skb_entail(struct sock *sk, struct sk_buff *skb)
++static void skb_entail(struct sock *sk, struct sk_buff *skb)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
+@@ -630,7 +630,6 @@ void skb_entail(struct sock *sk, struct sk_buff *skb)
+ 	if (tp->nonagle & TCP_NAGLE_PUSH)
+ 		tp->nonagle &= ~TCP_NAGLE_PUSH;
+ }
+-EXPORT_SYMBOL(skb_entail);
+ 
+ static inline void tcp_mark_urg(struct tcp_sock *tp, int flags)
+ {

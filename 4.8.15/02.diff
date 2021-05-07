@@ -1,0 +1,116 @@
+commit 1a86381b4c11f0507c4229ae570a7f12cb01849e
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue Dec 27 22:44:44 2016 +0300
+
+    Do not call fpu_begin/end in softirq twice
+
+diff --git a/arch/x86/include/asm/fpu/api.h b/arch/x86/include/asm/fpu/api.h
+index 1429a7c7..79636368 100644
+--- a/arch/x86/include/asm/fpu/api.h
++++ b/arch/x86/include/asm/fpu/api.h
+@@ -20,6 +20,10 @@
+  * All other cases use kernel_fpu_begin/end() which disable preemption
+  * during kernel FPU usage.
+  */
++#ifdef CONFIG_SECURITY_TEMPESTA
++extern void __kernel_fpu_begin_bh(void);
++extern void __kernel_fpu_end_bh(void);
++#endif
+ extern void __kernel_fpu_begin(void);
+ extern void __kernel_fpu_end(void);
+ extern void kernel_fpu_begin(void);
+diff --git a/arch/x86/kernel/fpu/core.c b/arch/x86/kernel/fpu/core.c
+index c289e2f4..661c9d54 100644
+--- a/arch/x86/kernel/fpu/core.c
++++ b/arch/x86/kernel/fpu/core.c
+@@ -109,7 +109,8 @@ bool irq_fpu_usable(void)
+ }
+ EXPORT_SYMBOL(irq_fpu_usable);
+ 
+-void __kernel_fpu_begin(void)
++void
++__kernel_fpu_begin_bh(void)
+ {
+ 	struct fpu *fpu = &current->thread.fpu;
+ 
+@@ -128,9 +129,10 @@ void __kernel_fpu_begin(void)
+ 		__fpregs_activate_hw();
+ 	}
+ }
+-EXPORT_SYMBOL(__kernel_fpu_begin);
++EXPORT_SYMBOL(__kernel_fpu_begin_bh);
+ 
+-void __kernel_fpu_end(void)
++void
++__kernel_fpu_end_bh(void)
+ {
+ 	struct fpu *fpu = &current->thread.fpu;
+ 
+@@ -141,6 +143,27 @@ void __kernel_fpu_end(void)
+ 
+ 	kernel_fpu_enable();
+ }
++EXPORT_SYMBOL(__kernel_fpu_end_bh);
++
++
++void __kernel_fpu_begin(void)
++{
++#ifdef CONFIG_SECURITY_TEMPESTA
++	if (in_softirq())
++		return;
++#endif
++	__kernel_fpu_begin_bh();
++}
++EXPORT_SYMBOL(__kernel_fpu_begin);
++
++void __kernel_fpu_end(void)
++{
++#ifdef CONFIG_SECURITY_TEMPESTA
++	if (in_softirq())
++		return;
++#endif
++	__kernel_fpu_end_bh();
++}
+ EXPORT_SYMBOL(__kernel_fpu_end);
+ 
+ void kernel_fpu_begin(void)
+diff --git a/kernel/softirq.c b/kernel/softirq.c
+index cae056b3..fe23e55d 100644
+--- a/kernel/softirq.c
++++ b/kernel/softirq.c
+@@ -251,7 +251,9 @@ asmlinkage __visible void __softirq_entry __do_softirq(void)
+ 	__local_bh_disable_ip(_RET_IP_, SOFTIRQ_OFFSET);
+ 	in_hardirq = lockdep_softirq_start();
+ 
+-	kernel_fpu_begin();
++#ifdef CONFIG_SECURITY_TEMPESTA
++	__kernel_fpu_begin_bh();
++#endif
+ 
+ restart:
+ 	/* Reset the pending bitmask before enabling irqs */
+@@ -297,7 +299,9 @@ restart:
+ 		wakeup_softirqd();
+ 	}
+ 
+-	kernel_fpu_end();
++#ifdef CONFIG_SECURITY_TEMPESTA
++	__kernel_fpu_end_bh();
++#endif
+ 	lockdep_softirq_end(in_hardirq);
+ 	account_irq_exit_time(current);
+ 	__local_bh_enable(SOFTIRQ_OFFSET);
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 354a4d69..b2169a40 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -891,8 +891,7 @@ struct tcp_md5sig_key *tcp_md5_do_lookup(const struct sock *sk,
+ 	const struct tcp_md5sig_info *md5sig;
+ 
+ 	/* caller either holds rcu_read_lock() or socket lock */
+-	md5sig = rcu_dereference_check(tp->md5sig_info,
+-				       lockdep_sock_is_held(sk));
++	md5sig = rcu_dereference_raw(tp->md5sig_info);
+ 	if (!md5sig)
+ 		return NULL;
+ #if IS_ENABLED(CONFIG_IPV6)

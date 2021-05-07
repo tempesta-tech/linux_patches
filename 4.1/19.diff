@@ -1,0 +1,26 @@
+commit 9e082b9e40a98964fbd18ab37546e2120f44ac39
+Author: Ilya V. Matveychikov <matvejchikov@gmail.com>
+Date:   Tue May 3 22:29:41 2016 +0300
+
+    Fix "BUG: using smp_processor_id() in preemptible" message
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index cd94e947..89decfbe 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -222,13 +222,14 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ {
+ 	char *ptr;
+ 	struct page *pg;
+-	TfwSkbMemPool *pools = this_cpu_ptr(pg_mpool);
++	TfwSkbMemPool *pools;
+ 	unsigned int c, cn, o, l, po;
+ 
+ 	cn = PG_CHUNK_NUM(size);
+ 	po = get_order(PG_ALLOC_SZ(size));
+ 
+ 	local_bh_disable();
++	pools = this_cpu_ptr(pg_mpool);
+ 
+ 	for (o = (cn == 1) ? 0 : (cn == 2) ? 1 : (cn <= 4) ? 2 : PG_LISTS_N;
+ 	     o < PG_LISTS_N; ++o)

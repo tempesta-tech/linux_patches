@@ -1,0 +1,25 @@
+commit db318a9420ac427ce97ed8fed27198b982edcebe
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue Mar 29 14:35:00 2016 +0300
+
+    Do not adjust skb data pointers for mmaped netlink sockets
+
+diff --git a/net/netlink/af_netlink.c b/net/netlink/af_netlink.c
+index 1e4da4e9..cd02ab86 100644
+--- a/net/netlink/af_netlink.c
++++ b/net/netlink/af_netlink.c
+@@ -2727,8 +2727,13 @@ static int netlink_dump(struct sock *sk)
+ 	 * dump to use the excess space makes it difficult for a user to have a
+ 	 * reasonable static buffer based on the expected largest dump of a
+ 	 * single netdev. The outcome is MSG_TRUNC error.
++	 *
++	 * NETLINK_MMAP expects the same address offsets in kernel and user
++	 * spaces, so don't move skb data pointers for mmaped sockets.
+ 	 */
+-	skb_reserve(skb, skb_tailroom(skb) - alloc_size);
++	if (!netlink_rx_is_mmaped(sk))
++		skb_reserve(skb, skb_tailroom(skb) - alloc_size);
++
+ 	netlink_skb_set_owner_r(skb, sk);
+ 
+ 	len = cb->dump(skb, cb);

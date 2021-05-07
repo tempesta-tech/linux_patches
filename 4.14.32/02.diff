@@ -1,0 +1,90 @@
+commit 96455fdec885cbebd402a0530276a6f0b0b95514
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Wed Jul 4 15:22:27 2018 +0300
+
+    Export pg_skb_alloc() for external allocation of the small page chunks
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 7f636349..f1c52db4 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -232,6 +232,12 @@
+ 	SKB_WITH_OVERHEAD((PAGE_SIZE << (ORDER)) - (X))
+ #define SKB_MAX_HEAD(X)		(SKB_MAX_ORDER((X), 0))
+ #define SKB_MAX_ALLOC		(SKB_MAX_ORDER(0, 2))
++#ifndef CONFIG_SECURITY_TEMPESTA
++#define SKB_MAX_HEADER	(PAGE_SIZE - MAX_TCP_HEADER			\
++			 - SKB_DATA_ALIGN(sizeof(struct sk_buff))	\
++			 - SKB_DATA_ALIGN(sizeof(struct skb_shared_info)) \
++			 - SKB_DATA_ALIGN(1))
++#endif
+ 
+ /* return minimum truesize of one skb containing X bytes of data */
+ #define SKB_TRUESIZE(X) ((X) +						\
+@@ -1018,6 +1024,7 @@ void kfree_skb_partial(struct sk_buff *skb, bool head_stolen);
+ bool skb_try_coalesce(struct sk_buff *to, struct sk_buff *from,
+ 		      bool *fragstolen, int *delta_truesize);
+ 
++void *pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node);
+ struct sk_buff *__alloc_skb(unsigned int size, gfp_t priority, int flags,
+ 			    int node);
+ struct sk_buff *__build_skb(void *data, unsigned int frag_size);
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 4a8b1b16..85620d3e 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -219,8 +219,8 @@ __pg_pool_shrink(TfwSkbMemPool *pool)
+ 	return true;
+ }
+ 
+-static void *
+-__pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
++void *
++pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ {
+ 	/*
+ 	 * Don't disable softirq if hardirqs are already disabled to avoid
+@@ -319,6 +319,7 @@ do {									\
+ #undef PREEMPT_CTX_DISABLE
+ #undef PREEMPT_CTX_ENABLE
+ }
++EXPORT_SYMBOL(pg_skg_alloc);
+ #endif
+ 
+ static void
+@@ -455,7 +456,7 @@ __alloc_skb(unsigned int size, gfp_t gfp_mask, int flags, int node)
+ 	if (sk_memalloc_socks() && (flags & SKB_ALLOC_RX))
+ 		gfp_mask |= __GFP_MEMALLOC;
+ 
+-	if (!(skb = __pg_skb_alloc(n, gfp_mask, node)))
++	if (!(skb = pg_skb_alloc(n, gfp_mask, node)))
+ 		return NULL;
+ 
+ 	data = (u8 *)skb + skb_sz;
+@@ -1706,7 +1707,7 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
+ 	if (skb_pfmemalloc(skb))
+ 		gfp_mask |= __GFP_MEMALLOC;
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-	data = __pg_skb_alloc(size, gfp_mask, NUMA_NO_NODE);
++	data = pg_skb_alloc(size, gfp_mask, NUMA_NO_NODE);
+ 	if (!data)
+ 		goto nodata;
+ 	size = SKB_WITH_OVERHEAD(PG_ALLOC_SZ(size));
+@@ -5493,7 +5494,7 @@ static int pskb_carve_inside_header(struct sk_buff *skb, const u32 off,
+ 		gfp_mask |= __GFP_MEMALLOC;
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 	size += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+-	data = __pg_skb_alloc(size, gfp_mask, NUMA_NO_NODE);
++	data = pg_skb_alloc(size, gfp_mask, NUMA_NO_NODE);
+ 	if (!data)
+ 		return -ENOMEM;
+ 	size = SKB_WITH_OVERHEAD(PG_ALLOC_SZ(size));
+@@ -5632,7 +5633,7 @@ static int pskb_carve_inside_nonlinear(struct sk_buff *skb, const u32 off,
+ 		gfp_mask |= __GFP_MEMALLOC;
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 	size += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+-	data = __pg_skb_alloc(size, gfp_mask, NUMA_NO_NODE);
++	data = pg_skb_alloc(size, gfp_mask, NUMA_NO_NODE);
+ 	if (!data)
+ 		return -ENOMEM;
+ 	size = SKB_WITH_OVERHEAD(PG_ALLOC_SZ(size));

@@ -1,0 +1,48 @@
+commit 33dbca151c44209e8027b91c00f2317cd69d56dd
+Author: Aleksey Baulin <ab@natsys-lab.com>
+Date:   Mon May 9 23:22:36 2016 +0300
+
+    Remove ss_skb_passed() as it's no longer needed.
+    
+    Now all SKBs are passed from Tempesta to the kernel as clones.
+    Therefore, handling a concurrent skb release is not vital anymore.
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 1458202d..f915c872 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -3481,20 +3481,5 @@ do {									\
+ 	TFW_SKB_CB(skb)->next = NULL;					\
+ } while (0)
+ 
+-/**
+- * Whether the @skb is passed to application layer.
+- *
+- * Linux TCP/IP code owns all socket buffers and can call __kfree_skb() at any
+- * time. Meantime, we need to pass the buffers to Tempesta code to avoid data
+- * copying.
+- */
+-static inline bool
+-ss_skb_passed(const struct sk_buff *skb)
+-{
+-	SsSkbCb *scb = TFW_SKB_CB(skb);
+-
+-	return scb->next || scb->prev;
+-}
+-
+ #endif	/* __KERNEL__ */
+ #endif	/* _LINUX_SKBUFF_H */
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 89decfbe..910bf009 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -903,9 +903,6 @@ static void skb_release_all(struct sk_buff *skb)
+ 
+ void __kfree_skb(struct sk_buff *skb)
+ {
+-	/* Can't free buffers owned by Tempesta. */
+-	BUG_ON((unlikely(ss_skb_passed(skb))));
+-
+ 	skb_release_all(skb);
+ 	kfree_skbmem(skb);
+ }

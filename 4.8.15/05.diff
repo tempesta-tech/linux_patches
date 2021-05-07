@@ -1,0 +1,23 @@
+commit fc752292c73f24fd8c6d4d9aecf03da28d734fd7
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Mon Feb 13 02:12:46 2017 +0300
+
+    Fix ifdef inaccuracy
+
+diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
+index 6c21d9ee..4b7bbde7 100644
+--- a/net/ipv4/inet_connection_sock.c
++++ b/net/ipv4/inet_connection_sock.c
+@@ -800,10 +800,12 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
+ 		inet_child_forget(sk, req, child);
+ 		child = NULL;
+ 	}
++#ifdef CONFIG_SECURITY_TEMPESTA
+ 	else if (sock_flag(sk, SOCK_TEMPESTA)) {
+ 		/* Tempesta doesn't use accept queue, just put the request. */
+ 		reqsk_put(req);
+ 	}
++#endif
+ 	else {
+ 		req->sk = child;
+ 		req->dl_next = NULL;

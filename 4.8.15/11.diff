@@ -1,0 +1,86 @@
+commit b55d7faf77abda1b76e3c542283bb7a72ef4d0dd
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Wed Jun 28 15:46:42 2017 +0300
+
+    put_page() calls compund head, so put_page(virt_to_head_page()) gets head page twice
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 23ffa064..a33a8fcf 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -4658,7 +4658,7 @@ static gro_result_t napi_skb_finish(gro_result_t ret, struct sk_buff *skb)
+ 			skb_dst_drop(skb);
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 			if (skb->skb_page)
+-				put_page(virt_to_head_page(skb));
++				put_page(virt_to_page(skb));
+ 			else
+ #endif
+ 				kmem_cache_free(skbuff_head_cache, skb);
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index da1d05c5..90bf7644 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -206,7 +206,7 @@ __pg_pool_shrink(TfwSkbMemPool *pool)
+ 		while (pool->count > pool->max) {
+ 			struct list_head *pc = pool->lh.next;
+ 			list_del(pc);
+-			put_page(virt_to_head_page(pc));
++			put_page(virt_to_page(pc));
+ 			--pool->count;
+ 		}
+ 		return false;
+@@ -267,7 +267,7 @@ do {									\
+ 		list_del(pc);
+ 		--pools[o].count;
+ 		ptr = (char *)pc;
+-		pg = virt_to_head_page(ptr);
++		pg = virt_to_page(ptr);
+ 		goto assign_tail_chunks;
+ 	}
+ 
+@@ -830,7 +830,7 @@ static void kfree_skbmem(struct sk_buff *skb)
+ 	case SKB_FCLONE_UNAVAILABLE:
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 		if (skb->skb_page)
+-			put_page(virt_to_head_page(skb));
++			put_page(virt_to_page(skb));
+ 		else
+ #endif
+ 			kmem_cache_free(skbuff_head_cache, skb);
+@@ -856,7 +856,7 @@ static void kfree_skbmem(struct sk_buff *skb)
+ fastpath:
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 	BUG_ON(!skb->skb_page);
+-	put_page(virt_to_head_page(skb));
++	put_page(virt_to_page(skb));
+ #else
+ 	kmem_cache_free(skbuff_fclone_cache, fclones);
+ #endif
+@@ -1001,7 +1001,7 @@ static inline void _kfree_skb_defer(struct sk_buff *skb)
+ 	 */
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 	if (skb->skb_page) {
+-		put_page(virt_to_head_page(skb));
++		put_page(virt_to_page(skb));
+ 		return;
+ 	}
+ #endif
+@@ -1520,7 +1520,7 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
+ 
+ nofrags:
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-	put_page(virt_to_head_page(data));
++	put_page(virt_to_page(data));
+ #else
+ 	kfree(data);
+ #endif
+@@ -4512,7 +4512,7 @@ void kfree_skb_partial(struct sk_buff *skb, bool head_stolen)
+ 		skb_release_head_state(skb);
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 		if (skb->skb_page)
+-			put_page(virt_to_head_page(skb));
++			put_page(virt_to_page(skb));
+ 		else
+ #endif
+ 			kmem_cache_free(skbuff_head_cache, skb);

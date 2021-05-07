@@ -1,0 +1,48 @@
+commit bc0568e127d5dd4f329d9bdc7725f6ff0ab73117
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Wed Dec 28 00:46:50 2016 +0300
+
+    Safe fpu_begin/end for different contexts; fix cond_resched() from softirq
+
+diff --git a/arch/x86/kernel/fpu/core.c b/arch/x86/kernel/fpu/core.c
+index 661c9d54..10e7abfa 100644
+--- a/arch/x86/kernel/fpu/core.c
++++ b/arch/x86/kernel/fpu/core.c
+@@ -166,8 +166,15 @@ void __kernel_fpu_end(void)
+ }
+ EXPORT_SYMBOL(__kernel_fpu_end);
+ 
++/*
++ * We don't know in which context the two functions at the below will be called,
++ * but we know preciseely that softirq uses FPU, so we have to disable softirq
++ * as well as task preemption.
++ */
++
+ void kernel_fpu_begin(void)
+ {
++	local_bh_disable();
+ 	preempt_disable();
+ 	__kernel_fpu_begin();
+ }
+@@ -177,6 +184,7 @@ void kernel_fpu_end(void)
+ {
+ 	__kernel_fpu_end();
+ 	preempt_enable();
++	local_bh_enable();
+ }
+ EXPORT_SYMBOL_GPL(kernel_fpu_end);
+ 
+diff --git a/net/ipv4/inet_hashtables.c b/net/ipv4/inet_hashtables.c
+index 77c20a48..01926e61 100644
+--- a/net/ipv4/inet_hashtables.c
++++ b/net/ipv4/inet_hashtables.c
+@@ -619,7 +619,8 @@ other_parity_scan:
+ 		goto ok;
+ next_port:
+ 		spin_unlock_bh(&head->lock);
+-		cond_resched();
++		if (!in_softirq())
++			cond_resched();
+ 	}
+ 
+ 	offset++;

@@ -1,0 +1,19 @@
+commit f20d5703592ce3078d3415edbc5b2703f614d9b7
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Mon Feb 19 01:55:19 2018 +0300
+
+    get_proto_family() is called by ss_sock_create() under rcu_read_lock_bh(), so do proper dereferencing
+
+diff --git a/net/socket.c b/net/socket.c
+index d3b11192..581a4f18 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -164,7 +164,7 @@ static const struct net_proto_family __rcu *net_families[NPROTO] __read_mostly;
+ 
+ const struct net_proto_family *get_proto_family(int family)
+ {
+-	return rcu_dereference(net_families[family]);
++	return rcu_dereference_bh(net_families[family]);
+ }
+ EXPORT_SYMBOL(get_proto_family);
+ 

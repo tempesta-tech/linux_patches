@@ -1,0 +1,219 @@
+commit d913cf2f1b49f2e1c8940bd331063b20aa719af8
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Thu Dec 28 05:45:01 2017 +0300
+
+    1. Fix #692: properly free fclone'd skb and update skb_shinfo(skb)->dataref in skb_entail()
+       (see https://github.com/tempesta-tech/tempesta/issues/692#issuecomment-354204275);
+    2. Fix skb_morph(), pskb_carve_inside_header() and pskb_carve_inside_nonlinear()
+       operations with skb pages - probably fixes #615;
+    3. Optimize inet_csk_reqsk_queue_add(): move Tempesta's fast path frum under the lock;
+    4. Remove unused alloc_skb_head() (also done in recent kernels);
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 3c5bd09b..107e395c 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -972,12 +972,6 @@ static inline struct sk_buff *alloc_skb_fclone(unsigned int size,
+ 	return __alloc_skb(size, priority, SKB_ALLOC_FCLONE, NUMA_NO_NODE);
+ }
+ 
+-struct sk_buff *__alloc_skb_head(gfp_t priority, int node);
+-static inline struct sk_buff *alloc_skb_head(gfp_t priority)
+-{
+-	return __alloc_skb_head(priority, -1);
+-}
+-
+ struct sk_buff *skb_morph(struct sk_buff *dst, struct sk_buff *src);
+ int skb_copy_ubufs(struct sk_buff *skb, gfp_t gfp_mask);
+ struct sk_buff *skb_clone(struct sk_buff *skb, gfp_t priority);
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index f232d88a..a0d768fd 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -322,37 +322,6 @@ assign_tail_chunks:
+ }
+ #endif
+ 
+-/* 	Allocate a new skbuff. We do this ourselves so we can fill in a few
+- *	'private' fields and also do memory statistics to find all the
+- *	[BEEP] leaks.
+- *
+- */
+-
+-struct sk_buff *__alloc_skb_head(gfp_t gfp_mask, int node)
+-{
+-	struct sk_buff *skb;
+-
+-	/* Get the HEAD */
+-	skb = kmem_cache_alloc_node(skbuff_head_cache,
+-				    gfp_mask & ~__GFP_DMA, node);
+-	if (!skb)
+-		goto out;
+-
+-	/*
+-	 * Only clear those fields we need to clear, not those that we will
+-	 * actually initialise below. Hence, don't put any more fields after
+-	 * the tail pointer in struct sk_buff!
+-	 */
+-	memset(skb, 0, offsetof(struct sk_buff, tail));
+-	skb->head = NULL;
+-	skb->truesize = sizeof(struct sk_buff);
+-	atomic_set(&skb->users, 1);
+-
+-	skb->mac_header = (typeof(skb->mac_header))~0U;
+-out:
+-	return skb;
+-}
+-
+ static void
+ __alloc_skb_init(struct sk_buff *skb, u8 *data, unsigned int size,
+ 		 int flags, bool pfmemalloc)
+@@ -1178,9 +1147,6 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
+ struct sk_buff *skb_morph(struct sk_buff *dst, struct sk_buff *src)
+ {
+ 	skb_release_all(dst);
+-#ifdef CONFIG_SECURITY_TEMPESTA
+-	dst->skb_page = src->skb_page;
+-#endif
+ 	return __skb_clone(dst, src);
+ }
+ EXPORT_SYMBOL_GPL(skb_morph);
+@@ -4560,11 +4526,14 @@ void kfree_skb_partial(struct sk_buff *skb, bool head_stolen)
+ 	if (head_stolen) {
+ 		skb_release_head_state(skb);
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-		if (skb->skb_page)
+-			put_page(virt_to_page(skb));
+-		else
++		/*
++		 * fclones are possible here with Tempesta due to using
++		 * pskb_copy_for_clone() in ss_send().
++		 */
++		kfree_skbmem(skb);
++#else
++		kmem_cache_free(skbuff_head_cache, skb);
+ #endif
+-			kmem_cache_free(skbuff_head_cache, skb);
+ 	} else {
+ 		__kfree_skb(skb);
+ 	}
+@@ -5032,7 +5001,11 @@ static int pskb_carve_inside_header(struct sk_buff *skb, const u32 off,
+ 	if (skb_cloned(skb)) {
+ 		/* drop the old head gracefully */
+ 		if (skb_orphan_frags(skb, gfp_mask)) {
++#ifdef CONFIG_SECURITY_TEMPESTA
++			skb_free_frag(data);
++#else
+ 			kfree(data);
++#endif
+ 			return -ENOMEM;
+ 		}
+ 		for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
+@@ -5049,7 +5022,11 @@ static int pskb_carve_inside_header(struct sk_buff *skb, const u32 off,
+ 
+ 	skb->head = data;
+ 	skb->data = data;
++#ifdef CONFIG_SECURITY_TEMPESTA
++	skb->head_frag = 1;
++#else
+ 	skb->head_frag = 0;
++#endif
+ #ifdef NET_SKBUFF_DATA_USES_OFFSET
+ 	skb->end = size;
+ #else
+@@ -5156,7 +5133,11 @@ static int pskb_carve_inside_nonlinear(struct sk_buff *skb, const u32 off,
+ 	       skb_shinfo(skb), offsetof(struct skb_shared_info,
+ 					 frags[skb_shinfo(skb)->nr_frags]));
+ 	if (skb_orphan_frags(skb, gfp_mask)) {
++#ifdef CONFIG_SECURITY_TEMPESTA
++		skb_free_frag(data);
++#else
+ 		kfree(data);
++#endif
+ 		return -ENOMEM;
+ 	}
+ 	shinfo = (struct skb_shared_info *)(data + size);
+@@ -5194,8 +5175,12 @@ static int pskb_carve_inside_nonlinear(struct sk_buff *skb, const u32 off,
+ 	skb_release_data(skb);
+ 
+ 	skb->head = data;
+-	skb->head_frag = 0;
+ 	skb->data = data;
++#ifdef CONFIG_SECURITY_TEMPESTA
++	skb->head_frag = 1;
++#else
++	skb->head_frag = 0;
++#endif
+ #ifdef NET_SKBUFF_DATA_USES_OFFSET
+ 	skb->end = size;
+ #else
+diff --git a/net/core/sock.c b/net/core/sock.c
+index 1989b3dd..471c4f63 100644
+--- a/net/core/sock.c
++++ b/net/core/sock.c
+@@ -1642,8 +1642,16 @@ void sock_wfree(struct sk_buff *skb)
+ 	 * if sk_wmem_alloc reaches 0, we must finish what sk_free()
+ 	 * could not do because of in-flight packets
+ 	 */
+-	if (atomic_sub_and_test(len, &sk->sk_wmem_alloc))
++	if (atomic_sub_and_test(len, &sk->sk_wmem_alloc)) {
++		/*
++		 * We don't bother with Tempesta socket memory limitations
++		 * since in proxy mode we just forward packets instead of real
++		 * allocations. Probably this is an issue. Probably sockets
++		 * can be freed from under us.
++		 */
++		WARN_ON(sock_flag(sk, SOCK_TEMPESTA));
+ 		__sk_free(sk);
++	}
+ }
+ EXPORT_SYMBOL(sock_wfree);
+ 
+diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
+index e93129c9..0f00e280 100644
+--- a/net/ipv4/inet_connection_sock.c
++++ b/net/ipv4/inet_connection_sock.c
+@@ -797,18 +797,19 @@ struct sock *inet_csk_reqsk_queue_add(struct sock *sk,
+ {
+ 	struct request_sock_queue *queue = &inet_csk(sk)->icsk_accept_queue;
+ 
+-	spin_lock(&queue->rskq_lock);
+-	if (unlikely(sk->sk_state != TCP_LISTEN)) {
+-		inet_child_forget(sk, req, child);
+-		child = NULL;
+-	}
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-	else if (sock_flag(sk, SOCK_TEMPESTA)) {
++	if (sk->sk_state == TCP_LISTEN && sock_flag(sk, SOCK_TEMPESTA)) {
+ 		/* Tempesta doesn't use accept queue, just put the request. */
+ 		reqsk_put(req);
++		return child;
+ 	}
+ #endif
+-	else {
++
++	spin_lock(&queue->rskq_lock);
++	if (unlikely(sk->sk_state != TCP_LISTEN)) {
++		inet_child_forget(sk, req, child);
++		child = NULL;
++	} else {
+ 		req->sk = child;
+ 		req->dl_next = NULL;
+ 		if (queue->rskq_accept_head == NULL)
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 6944a4ad..628b5df6 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -613,7 +613,11 @@ void skb_entail(struct sock *sk, struct sk_buff *skb)
+ 	tcb->seq     = tcb->end_seq = tp->write_seq;
+ 	tcb->tcp_flags = TCPHDR_ACK;
+ 	tcb->sacked  = 0;
+-	__skb_header_release(skb);
++	/*
++	 * fclones are possible here, so accurately update
++	 * skb_shinfo(skb)->dataref.
++	 */
++	skb_header_release(skb);
+ 	tcp_add_write_queue_tail(sk, skb);
+ 	sk->sk_wmem_queued += skb->truesize;
+ 	sk_mem_charge(sk, skb->truesize);

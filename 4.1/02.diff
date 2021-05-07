@@ -1,0 +1,31 @@
+commit 3c551f3d430ab204a714a079b58d3e5ac815a1d7
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sun Nov 1 23:38:45 2015 +0300
+
+    Open tcp_cleanup_rbuf() for Tempesta module
+
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 3605cae4..0827ab31 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -581,6 +581,7 @@ void tcp_get_info(struct sock *, struct tcp_info *);
+ 
+ /* Routines required by Tempesta FW. */
+ extern void skb_entail(struct sock *sk, struct sk_buff *skb);
++void tcp_cleanup_rbuf(struct sock *sk, int copied);
+ extern void tcp_push(struct sock *sk, int flags, int mss_now, int nonagle,
+ 		     int size_goal);
+ extern int tcp_send_mss(struct sock *sk, int *size_goal, int flags);
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 04c38201..3d2504b7 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -1358,7 +1358,7 @@ static int tcp_peek_sndq(struct sock *sk, struct msghdr *msg, int len)
+  * calculation of whether or not we must ACK for the sake of
+  * a window update.
+  */
+-static void tcp_cleanup_rbuf(struct sock *sk, int copied)
++void tcp_cleanup_rbuf(struct sock *sk, int copied)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 	bool time_to_ack = false;

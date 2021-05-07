@@ -1,0 +1,79 @@
+commit a7a10268f231b8328347a0ea4ca2ad21afe3b57a
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue Jun 27 01:23:50 2017 +0300
+
+    Small hardening: disable preemption in skb page allocator as well softirqs
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 7a0d81b4..da1d05c5 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -223,8 +223,26 @@ __pg_pool_shrink(TfwSkbMemPool *pool)
+ static void *
+ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ {
++	/*
++	 * Don't disable softirq if hardirqs are already disabled to avoid
++	 * warning in __local_bh_enable_ip(). Disable user space process
++	 * preemption as well as preemption by softirq (see SOFTIRQ_LOCK_OFFSET
++	 * usage in spin locks for the same motivation).
++	 */
+ 	bool dolock = !(in_irq() || irqs_disabled());
+-#define BH_CTX(action) do { if (dolock) local_bh_ ##action(); } while (0)
++#define PREEMPT_CTX_DISABLE()						\
++do {									\
++	if (dolock)							\
++		local_bh_disable();					\
++	preempt_disable();						\
++} while (0)
++
++#define PREEMPT_CTX_ENABLE()						\
++do {									\
++	preempt_enable();						\
++	if (dolock)							\
++		local_bh_enable();					\
++} while (0)
+ 
+ 	char *ptr;
+ 	struct page *pg;
+@@ -234,7 +252,7 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 	cn = PG_CHUNK_NUM(size);
+ 	po = get_order(PG_ALLOC_SZ(size));
+ 
+-	BH_CTX(disable);
++	PREEMPT_CTX_DISABLE();
+ 
+ 	pools = this_cpu_ptr(pg_mpool);
+ 
+@@ -253,7 +271,7 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 		goto assign_tail_chunks;
+ 	}
+ 
+-	BH_CTX(enable);
++	PREEMPT_CTX_ENABLE();
+ 
+ 	/* Add compound page metadata, if page order is > 0. */
+ 	gfp_mask |= __GFP_NOWARN | __GFP_NOMEMALLOC | __GFP_NORETRY
+@@ -266,7 +284,7 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 		return ptr; /* don't try to split compound page */
+ 	o = PAGE_SHIFT - PG_CHUNK_BITS;
+ 
+-	BH_CTX(disable);
++	PREEMPT_CTX_DISABLE();
+ 
+ 	pools = this_cpu_ptr(pg_mpool);
+ 
+@@ -284,10 +302,11 @@ assign_tail_chunks:
+ 		}
+ 	}
+ 
+-	BH_CTX(enable);
++	PREEMPT_CTX_ENABLE();
+ 
+ 	return ptr;
+-#undef BH_CTX
++#undef PREEMPT_CTX_DISABLE
++#undef PREEMPT_CTX_ENABLE
+ }
+ #endif
+ 

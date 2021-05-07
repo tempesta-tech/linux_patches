@@ -1,0 +1,36 @@
+commit 487f8db6b6dc8073ed6c9839729d4dad5897ed4d
+Author: Aleksey Baulin <Aleksey.Baulin@gmail.com>
+Date:   Wed Apr 15 21:30:45 2015 +0300
+
+    Supporting function for implementation of Tempesta ss_sock_create().
+
+diff --git a/include/linux/net.h b/include/linux/net.h
+index 99c9f0c1..a6fd726a 100644
+--- a/include/linux/net.h
++++ b/include/linux/net.h
+@@ -185,6 +185,8 @@ struct net_proto_family {
+ 	struct module	*owner;
+ };
+ 
++extern const struct net_proto_family *get_proto_family(int family);
++
+ struct iovec;
+ struct kvec;
+ 
+diff --git a/net/socket.c b/net/socket.c
+index 4ca1526d..2b525c77 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -158,6 +158,12 @@ static const struct file_operations socket_file_ops = {
+ static DEFINE_SPINLOCK(net_family_lock);
+ static const struct net_proto_family __rcu *net_families[NPROTO] __read_mostly;
+ 
++const struct net_proto_family *get_proto_family(int family)
++{
++	return rcu_dereference(net_families[family]);
++}
++EXPORT_SYMBOL(get_proto_family);
++
+ /*
+  *	Statistics counters of the socket lists
+  */

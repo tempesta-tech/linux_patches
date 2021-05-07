@@ -1,0 +1,28 @@
+commit 5d014cf77bb21102a56baac734204e36281e2a27
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sun Jun 17 15:23:20 2018 +0300
+
+    Optimize FPU save/restore for softirqs
+
+diff --git a/arch/x86/kernel/fpu/core.c b/arch/x86/kernel/fpu/core.c
+index 0f6649fd..532480a4 100644
+--- a/arch/x86/kernel/fpu/core.c
++++ b/arch/x86/kernel/fpu/core.c
+@@ -129,7 +129,7 @@ EXPORT_SYMBOL(__kernel_fpu_end_bh);
+ void __kernel_fpu_begin(void)
+ {
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-	if (in_serving_softirq())
++	if (likely(in_serving_softirq()))
+ 		return;
+ #endif
+ 	__kernel_fpu_begin_bh();
+@@ -139,7 +139,7 @@ EXPORT_SYMBOL(__kernel_fpu_begin);
+ void __kernel_fpu_end(void)
+ {
+ #ifdef CONFIG_SECURITY_TEMPESTA
+-	if (in_serving_softirq())
++	if (likely(in_serving_softirq()))
+ 		return;
+ #endif
+ 	__kernel_fpu_end_bh();

@@ -1,0 +1,60 @@
+commit 2b43bf04aa9663584040d4ffb5b76c3c034bf9d0
+Author: Ilya V. Matveychikov <matvejchikov@gmail.com>
+Date:   Fri Jun 24 01:08:31 2016 +0300
+
+    skbuff: do not warn when calling __alloc_skb with IRQs disabled (#6)
+    
+    Some users do call __alloc_skb with IRQs disabled. So, no need to worry
+    about locking the code with local_bh_disable() / local_bh_enable().
+    
+    For more information see the issue:
+    https://github.com/tempesta-tech/tempesta/issues/455
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index d00e64f8..f4e60a38 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -223,12 +223,14 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 	char *ptr;
+ 	struct page *pg;
+ 	TfwSkbMemPool *pools;
++	bool dolock = !(in_irq() || irqs_disabled());
+ 	unsigned int c, cn, o, l, po;
+ 
+ 	cn = PG_CHUNK_NUM(size);
+ 	po = get_order(PG_ALLOC_SZ(size));
+ 
+-	local_bh_disable();
++#define if_true(cond, stmt) do { if (cond) stmt; } while (0)
++	if_true(dolock, local_bh_disable());
+ 	pools = this_cpu_ptr(pg_mpool);
+ 
+ 	for (o = (cn == 1) ? 0 : (cn == 2) ? 1 : (cn <= 4) ? 2 : PG_LISTS_N;
+@@ -246,7 +248,7 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 		goto assign_tail_chunks;
+ 	}
+ 
+-	local_bh_enable();
++	if_true(dolock, local_bh_enable());
+ 
+ 	/* Add compound page metadata, if page order is > 0 */
+ 	gfp_mask |= __GFP_NOWARN | (po ? __GFP_COMP : 0);
+@@ -258,7 +260,7 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 		return ptr; /* don't try to split compound page */
+ 	o = PAGE_SHIFT - PG_CHUNK_BITS;
+ 
+-	local_bh_disable();
++	if_true(dolock, local_bh_disable());
+ 	pools = this_cpu_ptr(pg_mpool);
+ 
+ assign_tail_chunks:
+@@ -275,7 +277,8 @@ assign_tail_chunks:
+ 		}
+ 	}
+ 
+-	local_bh_enable();
++	if_true(dolock, local_bh_enable());
++#undef if_true
+ 
+ 	return ptr;
+ }

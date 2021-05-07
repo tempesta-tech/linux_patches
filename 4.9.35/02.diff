@@ -1,0 +1,42 @@
+commit b34d4ca504b942f5c2523fd764f47875c2c16b50
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Mon Jul 17 23:40:47 2017 +0300
+
+    Rollback nesting locking in tcp_v4_rcv()
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 6ead5bfe..d5b7bcf9 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -283,7 +283,9 @@ do {									\
+ 	/*
+ 	 * Don't try to split compound page.
+ 	 * TODO compound pages can be split as __alloc_page_frag() does it
+-	 * using fragment size in page reference counter.
++	 * using fragment size in page reference counter. However, it seems
++	 * the workflow is quite rare, in fact we've never seen large @size
++	 * in calls of the function.
+ 	 */
+ 	if (po)
+ 		return ptr;
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 4ea486ea..d5b80a3a 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -1716,16 +1716,7 @@ process:
+ 
+ 	sk_incoming_cpu_update(sk);
+ 
+-#ifdef CONFIG_SECURITY_TEMPESTA
+-	/*
+-	 * The socket is just retrieved by __inet_lookup_skb(), so there is
+-	 * no real nested locking yet. Leave the nested locking possiblity to
+-	 * Tempesta.
+-	 */
+-	bh_lock_sock(sk);
+-#else
+ 	bh_lock_sock_nested(sk);
+-#endif
+ 	tcp_segs_in(tcp_sk(sk), skb);
+ 	ret = 0;
+ 	if (!sock_owned_by_user(sk)) {

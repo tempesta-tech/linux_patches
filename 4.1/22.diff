@@ -1,0 +1,50 @@
+commit 9ddfcb54a2c6b557021d6d81ebfa65cb132f6f61
+Author: Ilya V. Matveychikov <matvejchikov@gmail.com>
+Date:   Wed Jun 15 22:02:30 2016 +0300
+
+    skbuff: fix compound pages memory leakage (#5)
+    
+    To avoid memory leakage in case of allocating of compound pages, it's
+    necessary to add __GFP_COMP flag to alloc_pages_node() mask. Also, use
+    virt_to_head_page() semantics to obtain pages by the chunk's addresses.
+    
+    For more information see the issue:
+    https://github.com/tempesta-tech/tempesta/issues/411
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index c1228b8c..d00e64f8 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -203,7 +203,7 @@ __pg_pool_shrink(TfwSkbMemPool *pool)
+ 		while (pool->count > pool->max) {
+ 			struct list_head *pc = pool->lh.next;
+ 			list_del(pc);
+-			put_page(virt_to_page(pc));
++			put_page(virt_to_head_page(pc));
+ 			--pool->count;
+ 		}
+ 		return false;
+@@ -242,11 +242,14 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 		list_del(pc);
+ 		--pools[o].count;
+ 		ptr = (char *)pc;
++		pg = virt_to_head_page(ptr);
+ 		goto assign_tail_chunks;
+ 	}
+ 
+ 	local_bh_enable();
+ 
++	/* Add compound page metadata, if page order is > 0 */
++	gfp_mask |= __GFP_NOWARN | (po ? __GFP_COMP : 0);
+ 	pg = alloc_pages_node(node, gfp_mask, po);
+ 	if (!pg)
+ 		return NULL;
+@@ -266,7 +269,7 @@ assign_tail_chunks:
+ 			--l;
+ 		chunk = (struct list_head *)(ptr + PG_CHUNK_SZ * c);
+ 		if (__pg_pool_shrink(&pools[l])) {
+-			get_page(virt_to_page(chunk));
++			get_page(pg);
+ 			list_add(chunk, &pools[l].lh);
+ 			++pools[l].count;
+ 		}

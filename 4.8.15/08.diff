@@ -1,0 +1,28 @@
+commit 16ff4ae05e8636204e19d0aa34b4e956d0035f92
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Wed May 10 21:19:45 2017 +0300
+
+    Avoid skb bulk free, our page allocator does not need it
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index ec7c81c3..7a0d81b4 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -976,6 +976,17 @@ static inline void _kfree_skb_defer(struct sk_buff *skb)
+ 	/* drop skb->head and call any destructors for packet */
+ 	skb_release_all(skb);
+ 
++	/*
++	 * Tempesta uses its own fast page allocator for socket buffers,
++	 * so no need to use napi_alloc_cache for paged skbs.
++	 */
++#ifdef CONFIG_SECURITY_TEMPESTA
++	if (skb->skb_page) {
++		put_page(virt_to_head_page(skb));
++		return;
++	}
++#endif
++
+ 	/* record skb to CPU local list */
+ 	nc->skb_cache[nc->skb_count++] = skb;
+ 

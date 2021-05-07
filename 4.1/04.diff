@@ -1,0 +1,19 @@
+commit deb3a4bc6f95fdc5493d2a6ce0d249137c5215a4
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue Nov 17 18:06:32 2015 +0300
+
+    Set eagerfpu=on by default
+
+diff --git a/arch/x86/kernel/xsave.c b/arch/x86/kernel/xsave.c
+index 87a815b8..84b73992 100644
+--- a/arch/x86/kernel/xsave.c
++++ b/arch/x86/kernel/xsave.c
+@@ -565,7 +565,7 @@ static void __init setup_init_fpu_buf(void)
+ 	xsave_state_booting(init_xstate_buf, -1);
+ }
+ 
+-static enum { AUTO, ENABLE, DISABLE } eagerfpu = AUTO;
++static enum { AUTO, ENABLE, DISABLE } eagerfpu = ENABLE;
+ static int __init eager_fpu_setup(char *s)
+ {
+ 	if (!strcmp(s, "on"))

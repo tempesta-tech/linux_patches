@@ -1,0 +1,183 @@
+commit 1a9f1216ef1c83d69c2aed30656c1dc8378328cb
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue May 6 22:16:56 2014 +0400
+
+    Tempesta LSM
+
+diff --git a/include/linux/tempesta_fw.h b/include/linux/tempesta_fw.h
+new file mode 100644
+index 00000000..05723985
+--- /dev/null
++++ b/include/linux/tempesta_fw.h
+@@ -0,0 +1,33 @@
++/**
++ * Linux interface for Tempesta FW (FireWall and/or FrameWork).
++ *
++ * Copyright (C) 2012-2014 NatSys Lab. (info@natsys-lab.com).
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License,
++ * or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59
++ * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++#ifndef __TEMPESTA_FW_H__
++#define __TEMPESTA_FW_H__
++
++#include <net/sock.h>
++
++typedef struct {
++	int (*sock_tcp_rcv)(struct sock *sk, struct sk_buff *skb);
++} TempestaOps;
++
++void tempesta_register_ops(TempestaOps *tops);
++void tempesta_unregister_ops(TempestaOps *tops);
++
++#endif /* __TEMPESTA_FW_H__ */
++
+diff --git a/security/Kconfig b/security/Kconfig
+index e9c6ac72..f32eadd9 100644
+--- a/security/Kconfig
++++ b/security/Kconfig
+@@ -132,7 +132,7 @@ choice
+ 	default DEFAULT_SECURITY_TOMOYO if SECURITY_TOMOYO
+ 	default DEFAULT_SECURITY_APPARMOR if SECURITY_APPARMOR
+ 	default DEFAULT_SECURITY_YAMA if SECURITY_YAMA
+-	default DEFAULT_SECURITY_DAC
++	default DEFAULT_SECURITY_TEMPESTA
+ 
+ 	help
+ 	  Select the security module that will be used by default if the
+diff --git a/security/Makefile b/security/Makefile
+index c26c81e9..2d7c1e17 100644
+--- a/security/Makefile
++++ b/security/Makefile
+@@ -8,6 +8,7 @@ subdir-$(CONFIG_SECURITY_SMACK)		+= smack
+ subdir-$(CONFIG_SECURITY_TOMOYO)        += tomoyo
+ subdir-$(CONFIG_SECURITY_APPARMOR)	+= apparmor
+ subdir-$(CONFIG_SECURITY_YAMA)		+= yama
++subdir-y				+= tempesta
+ 
+ # always enable default capabilities
+ obj-y					+= commoncap.o
+@@ -23,6 +24,7 @@ obj-$(CONFIG_AUDIT)			+= lsm_audit.o
+ obj-$(CONFIG_SECURITY_TOMOYO)		+= tomoyo/built-in.o
+ obj-$(CONFIG_SECURITY_APPARMOR)		+= apparmor/built-in.o
+ obj-$(CONFIG_SECURITY_YAMA)		+= yama/built-in.o
++obj-y					+= tempesta/built-in.o
+ obj-$(CONFIG_CGROUP_DEVICE)		+= device_cgroup.o
+ 
+ # Object integrity file lists
+diff --git a/security/tempesta/Makefile b/security/tempesta/Makefile
+new file mode 100644
+index 00000000..4c439ac0
+--- /dev/null
++++ b/security/tempesta/Makefile
+@@ -0,0 +1,3 @@
++obj-y := tempesta.o
++
++tempesta-y := tempesta_lsm.o
+diff --git a/security/tempesta/tempesta_lsm.c b/security/tempesta/tempesta_lsm.c
+new file mode 100644
+index 00000000..bc3e735a
+--- /dev/null
++++ b/security/tempesta/tempesta_lsm.c
+@@ -0,0 +1,90 @@
++/**
++ *		Tempesta FW
++ *
++ * Copyright (C) 2012-2014 NatSys Lab. (info@natsys-lab.com).
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License,
++ * or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59
++ * Temple Place - Suite 330, Boston, MA 02111-1307, USA.
++ */
++#include <linux/security.h>
++#include <linux/spinlock.h>
++
++#include <linux/tempesta_fw.h>
++
++static TempestaOps __rcu *tempesta_ops;
++static DEFINE_SPINLOCK(tops_lock);
++
++void
++tempesta_register_ops(TempestaOps *tops)
++{
++	spin_lock(&tops_lock);
++
++	BUG_ON(tempesta_ops);
++
++	rcu_assign_pointer(tempesta_ops, tops);
++
++	spin_unlock(&tops_lock);
++}
++EXPORT_SYMBOL(tempesta_register_ops);
++
++void
++tempesta_unregister_ops(TempestaOps *tops)
++{
++	spin_lock(&tops_lock);
++
++	BUG_ON(tempesta_ops != tops);
++
++	rcu_assign_pointer(tempesta_ops, NULL);
++
++	spin_unlock(&tops_lock);
++
++	/*
++	 * tempesta_ops is called in softirq only, so if there are some users
++	 * of the structures then they are active on their CPUs.
++	 * After the below we can be sure that nobody refers @tops and we can
++	 * go forward and destroy it.
++	 */
++	synchronize_rcu();
++}
++EXPORT_SYMBOL(tempesta_unregister_ops);
++
++static int
++tempesta_sock_tcp_rcv(struct sock *sk, struct sk_buff *skb)
++{
++	int r = 0;
++	TempestaOps *tops;
++
++	rcu_read_lock();
++	tops = rcu_dereference(tempesta_ops);
++	if (likely(tops))
++		r = tops->sock_tcp_rcv(sk, skb);
++	rcu_read_unlock();
++
++	return r;
++}
++
++static struct security_operations tempesta_sec_ops __read_mostly = {
++	.socket_sock_rcv_skb	= tempesta_sock_tcp_rcv,
++};
++
++static __init int
++tempesta_init(void)
++{
++	if (register_security(&tempesta_sec_ops))
++		panic("Tempesta: kernel security registration failed.\n");
++
++	return 0;
++}
++
++security_initcall(tempesta_init);

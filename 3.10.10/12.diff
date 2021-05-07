@@ -1,0 +1,36 @@
+commit ffc88707b311c3d145e1685635662a38e48aef02
+Author: Aleksey Baulin <Aleksey.Baulin@gmail.com>
+Date:   Fri May 1 01:45:39 2015 +0300
+
+    Make sure the kernel doesn't get polluted by stray Tempesta SKBs
+    
+    SKBs that are in Tempesta's possession (those are part of a Tempesta
+    message) may get cloned be the kernel on egress path. A cloned SKB
+    has its SKB header mostly inherited from the parent, and that includes
+    the skb->cb[] part that contains Tempesta linked list pointers among
+    other things. Those are the pointers that don't let the kernel delete
+    SKBs that are still in Tempesta's possesssion (see a check for that
+    in  __kfree_skb()). Tempesta doesn't know anything about those cloned
+    SKBs, and the kernel can't delete them now and ever due to that check.
+    A kernel running Tempesta gets polluted by these stray SKBs that can't
+    be deleted.
+    
+    This addresses the issue natsys/tempesta#96
+    The patch clears the area in skb->cb[] that keeps these pointers.
+    The kernel is able to delete these SKBs now as it sees fit.
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index ce216524..fe0705fa 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -719,7 +719,9 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
+ #ifdef CONFIG_XFRM
+ 	new->sp			= secpath_get(old->sp);
+ #endif
+-	memcpy(new->cb, old->cb, sizeof(old->cb));
++	memcpy(new->cb, old->cb, sizeof(old->cb) - sizeof(SsSkbCb));
++	TFW_SKB_CB(new)->next	= NULL;
++	TFW_SKB_CB(new)->prev	= NULL;
+ 	new->csum		= old->csum;
+ 	new->local_df		= old->local_df;
+ 	new->pkt_type		= old->pkt_type;

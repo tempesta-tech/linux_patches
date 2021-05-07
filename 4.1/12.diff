@@ -1,0 +1,36 @@
+commit de3b3e310418c1491fb846bbd7ff34dcf8c6d286
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sat Jan 23 22:35:47 2016 +0300
+
+    Cleanup: use nice macro to initialize TFW_SKB_CB
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 54f601a8..1458202d 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -3475,6 +3475,11 @@ typedef struct {
+ 
+ #define TFW_SKB_CB(s)		((SsSkbCb *)((s)->cb + sizeof((s)->cb)	\
+ 						      - sizeof(SsSkbCb)))
++#define TFW_SKB_CB_INIT(skb)						\
++do {									\
++	TFW_SKB_CB(skb)->prev = NULL;					\
++	TFW_SKB_CB(skb)->next = NULL;					\
++} while (0)
+ 
+ /**
+  * Whether the @skb is passed to application layer.
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index f85a3d46..ed185a4d 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -937,8 +937,7 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
+ 	/* We do not copy old->sk */
+ 	new->dev		= old->dev;
+ 	memcpy(new->cb, old->cb, sizeof(old->cb) - sizeof(SsSkbCb));
+-	TFW_SKB_CB(new)->next	= NULL;
+-	TFW_SKB_CB(new)->prev	= NULL;
++	TFW_SKB_CB_INIT(new);
+ 	skb_dst_copy(new, old);
+ #ifdef CONFIG_XFRM
+ 	new->sp			= secpath_get(old->sp);

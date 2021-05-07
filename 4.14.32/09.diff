@@ -1,0 +1,39 @@
+commit 3aa88fc4dbbdeab2a2651567db105dd850e936a3
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Fri Dec 21 04:13:17 2018 +0300
+
+    Accurately calculate TLS record overhead and and merge it with TCP
+    current transmission limit.
+
+diff --git a/include/net/tls.h b/include/net/tls.h
+index c3d45c5e..4a99f03d 100644
+--- a/include/net/tls.h
++++ b/include/net/tls.h
+@@ -58,7 +58,8 @@
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ #define TLS_MAX_TAG_SZ			16
+ /* Maximum size for required skb overhead: header, IV, tag. */
+-#define TLS_MAX_OVERHEAD		(TLS_AAD_SPACE_SIZE + TLS_MAX_TAG_SZ)
++#define TLS_MAX_OVERHEAD		(TLS_HEADER_SIZE + TLS_AAD_SPACE_SIZE \
++					 + TLS_MAX_TAG_SZ)
+ #endif
+ 
+ struct tls_sw_context {
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 60da7ef4..88dd7b54 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2341,10 +2341,10 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
+ 						     __func__, mss_now);
+ 				break;
+ 			}
+-			if (limit < TLS_MAX_PAYLOAD_SIZE)
+-				limit -= TLS_MAX_OVERHEAD;
+-			else
++			if (limit > TLS_MAX_PAYLOAD_SIZE + TLS_MAX_OVERHEAD)
+ 				limit = TLS_MAX_PAYLOAD_SIZE;
++			else
++				limit -= TLS_MAX_OVERHEAD;
+ 		}
+ #endif
+ 		if (skb->len > limit &&

@@ -1,0 +1,32 @@
+commit e38028820c6566dc6c389b96fec94626c7293a2d
+Author: Alexander Ostapenko <ao@tempesta-tech.com>
+Date:   Tue Nov 12 16:33:34 2019 +0300
+
+    Increase skb overhead for additional offset for HTTP/2 protocol (tempesta/#309, PR #1371).
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index b698c645..b9da5583 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -155,15 +155,17 @@ static inline bool dev_xmit_complete(int rc)
+  * movement on tcp_write_xmit(). Not all skbs have TLS headers - not a big deal
+  * to allocate 16 more bytes (5 - TLS header, 8 - IV, 3 - alignment).
+  */
+-#define TLS_MAX_HDR	16
++#define TLS_MAX_HDR		16
++#define HTTP2_MAX_OFFSET	32
+ #else
+-#define TLS_MAX_HDR	0
++#define TLS_MAX_HDR		0
++#define HTTP2_MAX_OFFSET	0
+ #endif
+ #if !IS_ENABLED(CONFIG_NET_IPIP) && !IS_ENABLED(CONFIG_NET_IPGRE) && \
+     !IS_ENABLED(CONFIG_IPV6_SIT) && !IS_ENABLED(CONFIG_IPV6_TUNNEL)
+-#define MAX_HEADER (LL_MAX_HEADER + TLS_MAX_HDR)
++#define MAX_HEADER (LL_MAX_HEADER + TLS_MAX_HDR + HTTP2_MAX_OFFSET)
+ #else
+-#define MAX_HEADER (LL_MAX_HEADER + 48 + TLS_MAX_HDR)
++#define MAX_HEADER (LL_MAX_HEADER + 48 + TLS_MAX_HDR + HTTP2_MAX_OFFSET)
+ #endif
+ 
+ /*

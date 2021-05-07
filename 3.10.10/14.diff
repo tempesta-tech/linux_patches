@@ -1,0 +1,34 @@
+commit 72bbef3c87a7dc9550fa4365e0dcba8315c9cc41
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue May 26 22:52:46 2015 +0300
+
+    Check skb->protocol to not to inspect netlink messages
+
+diff --git a/security/tempesta/tempesta_lsm.c b/security/tempesta/tempesta_lsm.c
+index 721d1f2c..d7c20aa5 100644
+--- a/security/tempesta/tempesta_lsm.c
++++ b/security/tempesta/tempesta_lsm.c
+@@ -2,6 +2,7 @@
+  *		Tempesta FW
+  *
+  * Copyright (C) 2012-2014 NatSys Lab. (info@natsys-lab.com).
++ * Copyright (C) 2015 Tempesta Technologies, Inc.
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published by
+@@ -65,9 +66,13 @@ tempesta_sock_tcp_rcv(struct sock *sk, struct sk_buff *skb)
+ 	TempestaOps *tops;
+ 
+ 	rcu_read_lock();
++
+ 	tops = rcu_dereference(tempesta_ops);
+-	if (likely(tops))
+-		r = tops->sock_tcp_rcv(sk, skb);
++	if (likely(tops)) {
++		if (skb->protocol == htons(ETH_P_IP))
++			r = tops->sock_tcp_rcv(sk, skb);
++	}
++
+ 	rcu_read_unlock();
+ 
+ 	return r;

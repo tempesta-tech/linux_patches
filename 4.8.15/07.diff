@@ -1,0 +1,74 @@
+commit 716cef4099777ea559d9cf2c0f4c58bd54944455
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sun Apr 16 21:56:59 2017 +0300
+
+    Remove checkpatch.pl from the kernel patch
+
+diff --git a/scripts/checkpatch.pl b/scripts/checkpatch.pl
+index 3735aa5d..206a6b34 100755
+--- a/scripts/checkpatch.pl
++++ b/scripts/checkpatch.pl
+@@ -216,7 +216,6 @@ help(0) if ($help);
+ 
+ list_types(0) if ($list_types);
+ 
+-$check = 1;
+ $fix = 1 if ($fix_inplace);
+ $check_orig = $check;
+ 
+@@ -3571,6 +3570,17 @@ sub process {
+ 			}
+ 		}
+ 
++# check for new typedefs, only function parameters and sparse annotations
++# make sense.
++		if ($line =~ /\btypedef\s/ &&
++		    $line !~ /\btypedef\s+$Type\s*\(\s*\*?$Ident\s*\)\s*\(/ &&
++		    $line !~ /\btypedef\s+$Type\s+$Ident\s*\(/ &&
++		    $line !~ /\b$typeTypedefs\b/ &&
++		    $line !~ /\b__bitwise(?:__|)\b/) {
++			WARN("NEW_TYPEDEFS",
++			     "do not add new typedefs\n" . $herecurr);
++		}
++
+ # * goes on variable not on type
+ 		# (char*[ const])
+ 		while ($line =~ m{(\($NonptrType(\s*(?:$Modifier\b\s*|\*\s*)+)\))}g) {
+@@ -4723,6 +4733,19 @@ sub process {
+ 				}
+ 			}
+ 
++# check for macros with flow control, but without ## concatenation
++# ## concatenation is commonly a macro that defines a function so ignore those
++			if ($has_flow_statement && !$has_arg_concat) {
++				my $herectx = $here . "\n";
++				my $cnt = statement_rawlines($ctx);
++
++				for (my $n = 0; $n < $cnt; $n++) {
++					$herectx .= raw_line($linenr, $n) . "\n";
++				}
++				WARN("MACRO_WITH_FLOW_CONTROL",
++				     "Macros with flow control statements should be avoided\n" . "$herectx");
++			}
++
+ # check for line continuations outside of #defines, preprocessor #, and asm
+ 
+ 		} else {
+@@ -4773,6 +4796,17 @@ sub process {
+ 					WARN("DO_WHILE_MACRO_WITH_TRAILING_SEMICOLON",
+ 					     "do {} while (0) macros should not be semicolon terminated\n" . "$herectx");
+ 				}
++			} elsif ($dstat =~ /^\+\s*#\s*define\s+$Ident.*;\s*$/) {
++				$ctx =~ s/\n*$//;
++				my $cnt = statement_rawlines($ctx);
++				my $herectx = $here . "\n";
++
++				for (my $n = 0; $n < $cnt; $n++) {
++					$herectx .= raw_line($linenr, $n) . "\n";
++				}
++
++				WARN("TRAILING_SEMICOLON",
++				     "macros should not use a trailing semicolon\n" . "$herectx");
+ 			}
+ 		}
+ 

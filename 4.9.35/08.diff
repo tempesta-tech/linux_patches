@@ -1,0 +1,97 @@
+commit aca87e9a752675ce9a560f5a525a46f94b4031d4
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Wed Mar 14 20:57:10 2018 +0300
+
+    Fix https://github.com/tempesta-tech/tempesta/issues/926
+    
+    The problem is in the mainline kernel, so the patch
+    https://git.kernel.org/pub/scm/linux/kernel/git/davem/net-next.git/commit/?id=158f323b9868b59967ad96957c4ca388161be321
+    is ported. However, the patch doesn't update sk_wmem_queued after
+    update of skb->truesize, so the second part of the patch is about
+    correct update of sk_wmem_queued. This part is almost copy@paste
+    from tcp_trim_head() which gets delta_truesize from __pskb_trim_head()
+    and update sk_wmem_queued.
+    
+    I had just a quick look onto current version of the Linux kernel and it
+    seems the socket wmem accounting isn't updated as in our version.
+    However, since the bug has been seen for Tempesta generated skbs only,
+    probably it doesn't affect native Linux workflow.
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index a0d768fd..2d0d273b 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -1417,9 +1417,9 @@ EXPORT_SYMBOL(__pskb_copy_fclone);
+ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
+ 		     gfp_t gfp_mask)
+ {
+-	int i;
++	int i, osize = skb_end_offset(skb);
+ 	u8 *data;
+-	int size = nhead + skb_end_offset(skb) + ntail;
++	int size = osize + nhead + ntail;
+ 	long off;
+ 
+ 	BUG_ON(nhead < 0);
+@@ -1494,6 +1494,10 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
+ 	skb->hdr_len  = 0;
+ 	skb->nohdr    = 0;
+ 	atomic_set(&skb_shinfo(skb)->dataref, 1);
++
++	if (!skb->sk || skb->destructor == sock_edemux)
++		skb->truesize += size - osize;
++
+ 	return 0;
+ 
+ nofrags:
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index 8deac539..4e139ec7 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -2689,9 +2689,19 @@ int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
+ 		if (tcp_fragment(sk, skb, len, cur_mss, GFP_ATOMIC))
+ 			return -ENOMEM; /* We'll try again later. */
+ 	} else {
++		int delta_truesize = skb->truesize;
++
+ 		if (skb_unclone(skb, GFP_ATOMIC))
+ 			return -ENOMEM;
+ 
++		delta_truesize -= skb->truesize;
++		sk->sk_wmem_queued -= delta_truesize;
++		if (delta_truesize > 0) {
++			sk_mem_uncharge(sk, delta_truesize);
++			sock_set_flag(sk, SOCK_QUEUE_SHRUNK);
++		} else {
++			sk_mem_charge(sk, -delta_truesize);
++		}
+ 		diff = tcp_skb_pcount(skb);
+ 		tcp_set_skb_tso_segs(skb, cur_mss);
+ 		diff -= tcp_skb_pcount(skb);
+diff --git a/net/netlink/af_netlink.c b/net/netlink/af_netlink.c
+index 246f29d3..84ba6b57 100644
+--- a/net/netlink/af_netlink.c
++++ b/net/netlink/af_netlink.c
+@@ -1210,8 +1210,7 @@ static struct sk_buff *netlink_trim(struct sk_buff *skb, gfp_t allocation)
+ 		skb = nskb;
+ 	}
+ 
+-	if (!pskb_expand_head(skb, 0, -delta, allocation))
+-		skb->truesize -= delta;
++	pskb_expand_head(skb, 0, -delta, allocation);
+ 
+ 	return skb;
+ }
+diff --git a/net/wireless/util.c b/net/wireless/util.c
+index c921c2ee..95efa237 100644
+--- a/net/wireless/util.c
++++ b/net/wireless/util.c
+@@ -620,8 +620,6 @@ int ieee80211_data_from_8023(struct sk_buff *skb, const u8 *addr,
+ 
+ 		if (pskb_expand_head(skb, head_need, 0, GFP_ATOMIC))
+ 			return -ENOMEM;
+-
+-		skb->truesize += head_need;
+ 	}
+ 
+ 	if (encaps_data) {

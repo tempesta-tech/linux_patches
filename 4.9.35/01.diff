@@ -1,0 +1,18 @@
+commit e3d505086ec4f7788e1f5710e1467b556d5cd850
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Fri Jul 14 23:53:24 2017 +0300
+
+    Add forgotten kmemcheck macro
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index 1a5e7ff6..3c5bd09b 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -753,6 +753,7 @@ struct sk_buff {
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 	__u8			tail_lock:1;
+ #endif
++	kmemcheck_bitfield_end(flags2);
+ 
+ #ifdef CONFIG_NET_SCHED
+ 	__u16			tc_index;	/* traffic control index */

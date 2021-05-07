@@ -1,0 +1,18 @@
+commit 36c9ee1786e09748aab3037cd6f24a990964fd98
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Sun Feb 14 01:21:17 2016 +0300
+
+    Refetch per-cpu skb memory pool after possible scheduling
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 1a382881..cd94e947 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -255,6 +255,7 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 	o = PAGE_SHIFT - PG_CHUNK_BITS;
+ 
+ 	local_bh_disable();
++	pools = this_cpu_ptr(pg_mpool);
+ 
+ assign_tail_chunks:
+ 	/* Split and store small tail chunks. */

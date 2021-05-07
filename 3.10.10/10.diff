@@ -1,0 +1,23 @@
+commit 867ea1afab385ee86e9d5cb8707429ccc47f13ee
+Author: Aleksey Baulin <Aleksey.Baulin@gmail.com>
+Date:   Tue Apr 14 09:06:46 2015 +0300
+
+    Switch on several CRYPTO options when Tempesta is configured.
+    
+    HMAC and SHA1 are used now for Tempesta sticky cookie.
+
+diff --git a/security/tempesta/Kconfig b/security/tempesta/Kconfig
+index 901dc02e..ba1859bc 100644
+--- a/security/tempesta/Kconfig
++++ b/security/tempesta/Kconfig
+@@ -2,6 +2,10 @@ config SECURITY_TEMPESTA
+ 	bool "Tempesta FW Support"
+ 	depends on SECURITY && NET && INET
+ 	select SECURITY_NETWORK
++	select CRYPTO
++	select CRYPTO_HMAC
++	select CRYPTO_SHA1
++	select CRYPTO_SHA1_SSSE3
+ 	default y
+ 	help
+ 	  This selects Tempesta FW security module.

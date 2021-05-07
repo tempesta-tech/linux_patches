@@ -1,0 +1,48 @@
+commit ef37a5aeb9c31aa408f2fb84c0f10be4c082cf58
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Tue Nov 17 16:18:07 2015 +0300
+
+    Save/restore FPU context on processing budget packets in softirq
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index a42b2328..9896bc43 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -138,6 +138,11 @@
+ 
+ #include "net-sysfs.h"
+ 
++#ifdef CONFIG_SECURITY_TEMPESTA
++/* Tempesta supports x86-64 only. */
++#include <asm/i387.h>
++#endif
++
+ /* Instead of increasing this, you should create a hash table. */
+ #define MAX_GRO_SKBS 8
+ 
+@@ -4620,6 +4625,15 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
+ 
+ 	weight = n->weight;
+ 
++#ifdef CONFIG_SECURITY_TEMPESTA
++	/*
++	 * Switch FPU context once per budget packets to let Tempesta
++	 * run many vector operations w/o costly FPU switches.
++	 * Eager FPU must be enabled.
++	 */
++	kernel_fpu_begin();
++#endif
++
+ 	/* This NAPI_STATE_SCHED test is for avoiding a race
+ 	 * with netpoll's poll_napi().  Only the entity which
+ 	 * obtains the lock and sees NAPI_STATE_SCHED set will
+@@ -4666,6 +4680,9 @@ static int napi_poll(struct napi_struct *n, struct list_head *repoll)
+ 	list_add_tail(&n->poll_list, repoll);
+ 
+ out_unlock:
++#ifdef CONFIG_SECURITY_TEMPESTA
++	kernel_fpu_end();
++#endif
+ 	netpoll_poll_unlock(have);
+ 
+ 	return work;

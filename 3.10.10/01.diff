@@ -1,0 +1,150 @@
+commit bc9c18ee71b93918f23e4432dd919be0944f850b
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Mon Nov 4 00:30:14 2013 +0400
+
+    Export more functions for connection closing in synchronous sockets
+
+diff --git a/include/net/tcp.h b/include/net/tcp.h
+index 6ce86e46..64e5d06f 100644
+--- a/include/net/tcp.h
++++ b/include/net/tcp.h
+@@ -582,10 +582,15 @@ static inline int tcp_bound_to_half_wnd(struct tcp_sock *tp, int pktsize)
+ 
+ /* tcp.c */
+ extern void tcp_get_info(const struct sock *, struct tcp_info *);
+-void tcp_push(struct sock *sk, int flags, int mss_now, int nonagle);
+-int tcp_send_mss(struct sock *sk, int *size_goal, int flags);
+-void skb_entail(struct sock *sk, struct sk_buff *skb);
+-void tcp_mark_push(struct tcp_sock *tp, struct sk_buff *skb);
++
++/* Routines required by Synchronous Sockets module. */
++extern void skb_entail(struct sock *sk, struct sk_buff *skb);
++extern void tcp_push(struct sock *sk, int flags, int mss_now, int nonagle);
++extern int tcp_send_mss(struct sock *sk, int *size_goal, int flags);
++extern void tcp_mark_push(struct tcp_sock *tp, struct sk_buff *skb);
++extern void tcp_init_nondata_skb(struct sk_buff *skb, u32 seq, u8 flags);
++extern void tcp_queue_skb(struct sock *sk, struct sk_buff *skb);
++extern int tcp_close_state(struct sock *sk);
+ 
+ /* Read 'sendfile()'-style from a TCP socket */
+ typedef int (*sk_read_actor_t)(read_descriptor_t *, struct sk_buff *,
+diff --git a/net/core/request_sock.c b/net/core/request_sock.c
+index 4425148d..aad84f41 100644
+--- a/net/core/request_sock.c
++++ b/net/core/request_sock.c
+@@ -223,3 +223,4 @@ out:
+ 	sock_put(lsk);
+ 	return;
+ }
++EXPORT_SYMBOL(reqsk_fastopen_remove);
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index ada6e46d..6c23c10f 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -281,6 +281,7 @@
+ #include <asm/ioctls.h>
+ 
+ int sysctl_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
++EXPORT_SYMBOL_GPL(sysctl_tcp_fin_timeout);
+ 
+ struct percpu_counter tcp_orphan_count;
+ EXPORT_SYMBOL_GPL(tcp_orphan_count);
+@@ -2004,7 +2005,7 @@ static const unsigned char new_state[16] = {
+   /* TCP_CLOSING	*/ TCP_CLOSING,
+ };
+ 
+-static int tcp_close_state(struct sock *sk)
++int tcp_close_state(struct sock *sk)
+ {
+ 	int next = (int)new_state[sk->sk_state];
+ 	int ns = next & TCP_STATE_MASK;
+@@ -2013,6 +2014,7 @@ static int tcp_close_state(struct sock *sk)
+ 
+ 	return next & TCP_ACTION_FIN;
+ }
++EXPORT_SYMBOL(tcp_close_state);
+ 
+ /*
+  *	Shutdown the sending side of a connection. Much like close except
+@@ -2052,6 +2054,7 @@ bool tcp_check_oom(struct sock *sk, int shift)
+ 		net_info_ratelimited("out of memory -- consider tuning tcp_mem\n");
+ 	return too_many_orphans || out_of_socket_memory;
+ }
++EXPORT_SYMBOL(tcp_check_oom);
+ 
+ void tcp_close(struct sock *sk, long timeout)
+ {
+diff --git a/net/ipv4/tcp_minisocks.c b/net/ipv4/tcp_minisocks.c
+index 0f017882..36b99782 100644
+--- a/net/ipv4/tcp_minisocks.c
++++ b/net/ipv4/tcp_minisocks.c
+@@ -352,6 +352,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
+ 	tcp_update_metrics(sk);
+ 	tcp_done(sk);
+ }
++EXPORT_SYMBOL(tcp_time_wait);
+ 
+ void tcp_twsk_destructor(struct sock *sk)
+ {
+diff --git a/net/ipv4/tcp_output.c b/net/ipv4/tcp_output.c
+index ec335fab..fdb0d797 100644
+--- a/net/ipv4/tcp_output.c
++++ b/net/ipv4/tcp_output.c
+@@ -353,7 +353,7 @@ static inline void TCP_ECN_send(struct sock *sk, struct sk_buff *skb,
+ /* Constructs common control bits of non-data skb. If SYN/FIN is present,
+  * auto increment end seqno.
+  */
+-static void tcp_init_nondata_skb(struct sk_buff *skb, u32 seq, u8 flags)
++void tcp_init_nondata_skb(struct sk_buff *skb, u32 seq, u8 flags)
+ {
+ 	skb->ip_summed = CHECKSUM_PARTIAL;
+ 	skb->csum = 0;
+@@ -370,6 +370,7 @@ static void tcp_init_nondata_skb(struct sk_buff *skb, u32 seq, u8 flags)
+ 		seq++;
+ 	TCP_SKB_CB(skb)->end_seq = seq;
+ }
++EXPORT_SYMBOL(tcp_init_nondata_skb);
+ 
+ static inline bool tcp_urg_mode(const struct tcp_sock *tp)
+ {
+@@ -961,7 +962,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
+  * NOTE: probe0 timer is not checked, do not forget tcp_push_pending_frames,
+  * otherwise socket can stall.
+  */
+-static void tcp_queue_skb(struct sock *sk, struct sk_buff *skb)
++void tcp_queue_skb(struct sock *sk, struct sk_buff *skb)
+ {
+ 	struct tcp_sock *tp = tcp_sk(sk);
+ 
+@@ -972,6 +973,7 @@ static void tcp_queue_skb(struct sock *sk, struct sk_buff *skb)
+ 	sk->sk_wmem_queued += skb->truesize;
+ 	sk_mem_charge(sk, skb->truesize);
+ }
++EXPORT_SYMBOL(tcp_queue_skb);
+ 
+ /* Initialize TSO segments for a packet. */
+ static void tcp_set_skb_tso_segs(const struct sock *sk, struct sk_buff *skb,
+@@ -1348,6 +1350,7 @@ unsigned int tcp_current_mss(struct sock *sk)
+ 
+ 	return mss_now;
+ }
++EXPORT_SYMBOL(tcp_current_mss);
+ 
+ /* Congestion window validation. (RFC2861) */
+ static void tcp_cwnd_validate(struct sock *sk)
+@@ -2043,6 +2046,7 @@ void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
+ 			   sk_gfp_atomic(sk, GFP_ATOMIC)))
+ 		tcp_check_probe_timer(sk);
+ }
++EXPORT_SYMBOL(__tcp_push_pending_frames);
+ 
+ /* Send _single_ skb sitting at the send head. This function requires
+  * true push pending frames to setup probe timer etc.
+@@ -2605,6 +2609,7 @@ void tcp_send_active_reset(struct sock *sk, gfp_t priority)
+ 
+ 	TCP_INC_STATS(sock_net(sk), TCP_MIB_OUTRSTS);
+ }
++EXPORT_SYMBOL(tcp_send_active_reset);
+ 
+ /* Send a crossed SYN-ACK during socket establishment.
+  * WARNING: This routine must only be called when we have already sent

@@ -1,0 +1,168 @@
+commit fabcd45bda09536f829061e7eb2bed8c32542090
+Author: Alexander K <ak@natsys-lab.com>
+Date:   Thu Feb 11 22:25:19 2016 +0300
+
+    Fix memory leak in skb page allocator
+
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index ed185a4d..1a382881 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -163,15 +163,66 @@ out:
+ #define PG_CHUNK_MASK		(~(PG_CHUNK_SZ - 1))
+ #define PG_ALLOC_SZ(s)		(((s) + (PG_CHUNK_SZ - 1)) & PG_CHUNK_MASK)
+ #define PG_CHUNK_NUM(s)		(PG_ALLOC_SZ(s) >> PG_CHUNK_BITS)
++#define PG_POOL_HLIM_BASE	256
+ 
+-static DEFINE_PER_CPU(struct list_head [PG_LISTS_N], pg_chunks);
++/**
++ * @lh		- list head of chunk pool;
++ * @count	- current number of chunks in @lh;
++ * @h_limit	- hard limit for size of @lh;
++ * @max		- current maximum allowed size of the list, can be 0.
++ */
++typedef struct {
++	struct list_head	lh;
++	unsigned int		count;
++	unsigned int		h_limit;
++	unsigned int		max;
++} TfwSkbMemPool;
++
++static DEFINE_PER_CPU(TfwSkbMemPool [PG_LISTS_N], pg_mpool);
++
++static bool
++__pg_pool_grow(TfwSkbMemPool *pool)
++{
++	if (!pool->count) {
++		/* Too few chunks were provisioned. */
++		unsigned int n = max(pool->max, 1U) << 1; /* start from 2 */
++		pool->max = (n > pool->h_limit) ? pool->h_limit : n;
++		return false;
++	}
++	if (pool->max < pool->h_limit)
++		++pool->max;
++	return true;
++}
++
++static bool
++__pg_pool_shrink(TfwSkbMemPool *pool)
++{
++	if (unlikely(pool->count >= pool->max)) {
++		/* Producers are much faster consumers right now. */
++		pool->max >>= 1;
++		while (pool->count > pool->max) {
++			struct list_head *pc = pool->lh.next;
++			list_del(pc);
++			put_page(virt_to_page(pc));
++			--pool->count;
++		}
++		return false;
++	}
++	/*
++	 * Producers and consumers look balanced.
++	 * Slowly reduce provisioning.
++	 */
++	if (pool->max)
++		--pool->max;
++	return true;
++}
+ 
+ static void *
+ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ {
+ 	char *ptr;
+ 	struct page *pg;
+-	struct list_head *pc_lists = this_cpu_ptr(pg_chunks);
++	TfwSkbMemPool *pools = this_cpu_ptr(pg_mpool);
+ 	unsigned int c, cn, o, l, po;
+ 
+ 	cn = PG_CHUNK_NUM(size);
+@@ -183,11 +234,12 @@ __pg_skb_alloc(unsigned int size, gfp_t gfp_mask, int node)
+ 	     o < PG_LISTS_N; ++o)
+ 	{
+ 		struct list_head *pc;
+-		if (list_empty(&pc_lists[o]))
++		if (!__pg_pool_grow(&pools[o]))
+ 			continue;
+ 
+-		pc = pc_lists[o].next;
++		pc = pools[o].lh.next;
+ 		list_del(pc);
++		--pools[o].count;
+ 		ptr = (char *)pc;
+ 		goto assign_tail_chunks;
+ 	}
+@@ -211,8 +263,11 @@ assign_tail_chunks:
+ 		while (c + (1 << l) > cn)
+ 			--l;
+ 		chunk = (struct list_head *)(ptr + PG_CHUNK_SZ * c);
+-		get_page(virt_to_page(chunk));
+-		list_add(chunk, &pc_lists[l]);
++		if (__pg_pool_shrink(&pools[l])) {
++			get_page(virt_to_page(chunk));
++			list_add(chunk, &pools[l].lh);
++			++pools[l].count;
++		}
+ 	}
+ 
+ 	local_bh_enable();
+@@ -351,7 +406,7 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
+ 	size = SKB_WITH_OVERHEAD(ksize(data));
+ 	prefetchw(data + size);
+ 
+-	__alloc_skb_init(skb, data, size, flags, &pfmemalloc);
++	__alloc_skb_init(skb, data, size, flags, pfmemalloc);
+ out:
+ 	return skb;
+ nodata:
+@@ -368,6 +423,7 @@ struct sk_buff *
+ __alloc_skb(unsigned int size, gfp_t gfp_mask, int flags, int node)
+ {
+ 	struct sk_buff *skb;
++	struct page *pg;
+ 	u8 *data;
+ 	size_t skb_sz = (flags & SKB_ALLOC_FCLONE)
+ 			? SKB_DATA_ALIGN(sizeof(struct sk_buff_fclones))
+@@ -385,10 +441,11 @@ __alloc_skb(unsigned int size, gfp_t gfp_mask, int flags, int node)
+ 	size = SKB_WITH_OVERHEAD(PG_ALLOC_SZ(n) - skb_sz);
+ 	prefetchw(data + size);
+ 
+-	__alloc_skb_init(skb, data, size, flags, false);
++	pg = virt_to_head_page(data);
++	get_page(pg);
++	__alloc_skb_init(skb, data, size, flags, page_is_pfmemalloc(pg));
+ 	skb->head_frag = 1;
+ 	skb->skb_page = 1;
+-	get_page(virt_to_head_page(skb->head));
+ 
+ 	return skb;
+ }
+@@ -1362,7 +1419,9 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
+ 	off = (data + nhead) - skb->head;
+ 
+ 	skb->head     = data;
+-#ifndef CONFIG_SECURITY_TEMPESTA
++#ifdef CONFIG_SECURITY_TEMPESTA
++	skb->head_frag = 1;
++#else
+ 	skb->head_frag = 0;
+ #endif
+ 	skb->data    += off;
+@@ -3488,8 +3547,15 @@ void __init skb_init(void)
+ #ifdef CONFIG_SECURITY_TEMPESTA
+ 	int cpu, l;
+ 	for_each_possible_cpu(cpu)
+-		for (l = 0; l < PG_LISTS_N; ++l)
+-			INIT_LIST_HEAD(per_cpu_ptr(&pg_chunks[l], cpu));
++		for (l = 0; l < PG_LISTS_N; ++l) {
++			TfwSkbMemPool *pool = per_cpu_ptr(&pg_mpool[l], cpu);
++			INIT_LIST_HEAD(&pool->lh);
++			/*
++			 * Large chunks are also can be used to get smaller
++			 * chunks, so we cache them more aggressively.
++			 */
++			pool->h_limit = PG_POOL_HLIM_BASE << l;
++		}
+ #else
+ 	skbuff_fclone_cache = kmem_cache_create("skbuff_fclone_cache",
+ 						sizeof(struct sk_buff_fclones),
